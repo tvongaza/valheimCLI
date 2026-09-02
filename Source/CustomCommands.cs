@@ -415,6 +415,23 @@ namespace valheimCLI
                 args.Context.AddString($"OK: camera shake intensity set to {camera.m_shakeIntensity:F2}");
             }, isCheat: true);
 
+            new Terminal.ConsoleCommand("cli_freefly_pose", "Place the free-fly camera at a position looking at a target (enables freefly, zero smoothing): cli_freefly_pose <x> <y> <z> <lookX> <lookY> <lookZ>", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            {
+                if (args.Length < 7 ||
+                    !float.TryParse(args[1], out float camX) ||
+                    !float.TryParse(args[2], out float camY) ||
+                    !float.TryParse(args[3], out float camZ) ||
+                    !float.TryParse(args[4], out float lookX) ||
+                    !float.TryParse(args[5], out float lookY) ||
+                    !float.TryParse(args[6], out float lookZ))
+                {
+                    args.Context.AddString("Usage: cli_freefly_pose <x> <y> <z> <lookX> <lookY> <lookZ>");
+                    return;
+                }
+
+                FreeFlyPose(new Vector3(camX, camY, camZ), new Vector3(lookX, lookY, lookZ), args.Context.AddString);
+            }, isCheat: true);
+
             new Terminal.ConsoleCommand("cli_weapon_state", "Print equipped weapon, ammo, and reload state", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
             {
                 PrintWeaponState(args.Context.AddString);
@@ -2476,6 +2493,52 @@ namespace valheimCLI
             player.SetLookDir(direction.normalized);
             player.FaceLookDirection();
             addOutput($"OK: Aimed at {point.x:F2},{point.y:F2},{point.z:F2}");
+        }
+
+        /// <summary>
+        /// One deterministic camera framing: enable the game's free-fly camera if it
+        /// is not active, drop its smoothing so the pose does not lag, then write the
+        /// yaw/pitch the free-fly update derives the rotation from every frame (a bare
+        /// LookAt would be overwritten on the next LateUpdate).
+        /// </summary>
+        public static void FreeFlyPose(Vector3 position, Vector3 target, Action<string> addOutput)
+        {
+            GameCamera camera = GameCamera.instance;
+            if (camera == null)
+            {
+                addOutput("ERROR: GameCamera not available");
+                return;
+            }
+
+            Vector3 direction = target - position;
+            if (direction.sqrMagnitude < 0.001f)
+            {
+                addOutput("ERROR: Look target coincides with the camera position");
+                return;
+            }
+
+            direction.Normalize();
+            if (!camera.m_freeFly)
+            {
+                camera.ToggleFreeFly();
+            }
+
+            camera.SetFreeFlySmoothness(0f);
+            camera.m_freeFlyLockon = null;
+            camera.m_freeFlyTarget = null;
+            camera.m_freeFlyVel = Vector3.zero;
+            camera.m_freeFlySavedVel = Vector3.zero;
+
+            float yaw = Mathf.Atan2(direction.x, direction.z) * Mathf.Rad2Deg;
+            float pitch = -Mathf.Asin(Mathf.Clamp(direction.y, -1f, 1f)) * Mathf.Rad2Deg;
+            camera.m_freeFlyYaw = yaw;
+            camera.m_freeFlyPitch = pitch;
+
+            Quaternion rotation = Quaternion.Euler(pitch, yaw, 0f);
+            camera.m_freeFlyRef = rotation;
+            camera.transform.position = position;
+            camera.transform.rotation = rotation;
+            addOutput($"OK: freefly camera at {position.x:F1},{position.y:F1},{position.z:F1} yaw={yaw:F1} pitch={pitch:F1}");
         }
 
         public static void AimAtNearestCharacter(string requestedName, float radius, float heightOffset, Action<string> addOutput)
