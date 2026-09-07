@@ -432,6 +432,101 @@ namespace valheimCLI
                 FreeFlyPose(new Vector3(camX, camY, camZ), new Vector3(lookX, lookY, lookZ), args.Context.AddString);
             }, isCheat: true);
 
+            new Terminal.ConsoleCommand("cli_world_dump", "Sample the world generator to CSV for offline analysis: cli_world_dump [step=50] [dir]. Writes world.csv (x,z,height,biome,river) over the full map and locations.csv (name,x,z,radius)", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            {
+                int step = 50;
+                if (args.Length >= 2 && !int.TryParse(args[1], out step))
+                {
+                    args.Context.AddString("Usage: cli_world_dump [step=50] [dir]");
+                    return;
+                }
+
+                string? dir = args.Length >= 3 ? args[2] : null;
+                WorldDump(Mathf.Clamp(step, 5, 1000), dir, args.Context.AddString);
+            }, isCheat: true);
+
+            new Terminal.ConsoleCommand("cli_zone_ready", "Report whether every zone within a radius of a point is loaded, for scripts that poll after a teleport instead of sleeping: cli_zone_ready <x> <z> [radius=32]", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            {
+                if (args.Length < 3 || !float.TryParse(args[1], out float x) || !float.TryParse(args[2], out float z))
+                {
+                    args.Context.AddString("Usage: cli_zone_ready <x> <z> [radius=32]");
+                    return;
+                }
+
+                float radius = 32f;
+                if (args.Length >= 4)
+                {
+                    float.TryParse(args[3], out radius);
+                }
+
+                ZoneReady(x, z, Mathf.Clamp(radius, 1f, 200f), args.Context.AddString);
+            }, isCheat: true);
+
+            new Terminal.ConsoleCommand("cli_clear_view", "Capture helper: remove trees, logs, rocks and other destructible clutter around a point, leaving pieces, characters, items and locations: cli_clear_view <x> <z> [radius=40]", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            {
+                if (args.Length < 3 || !float.TryParse(args[1], out float x) || !float.TryParse(args[2], out float z))
+                {
+                    args.Context.AddString("Usage: cli_clear_view <x> <z> [radius=40]");
+                    return;
+                }
+
+                float radius = 40f;
+                if (args.Length >= 4)
+                {
+                    float.TryParse(args[3], out radius);
+                }
+
+                ClearView(x, z, Mathf.Clamp(radius, 1f, 120f), args.Context.AddString);
+            }, isCheat: true);
+
+            new Terminal.ConsoleCommand("cli_mist", "Capture helper: switch every loaded Mistlands mist volume off or back on: cli_mist <off|on>. Volumes in zones loaded later need the command again", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            {
+                if (args.Length < 2 || (!args[1].Equals("on", StringComparison.OrdinalIgnoreCase) && !args[1].Equals("off", StringComparison.OrdinalIgnoreCase)))
+                {
+                    args.Context.AddString("Usage: cli_mist <off|on>");
+                    return;
+                }
+
+                bool on = args[1].Equals("on", StringComparison.OrdinalIgnoreCase);
+                Mister[] misters = UnityEngine.Object.FindObjectsByType<Mister>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+                foreach (Mister mister in misters)
+                {
+                    mister.gameObject.SetActive(on);
+                }
+
+                args.Context.AddString($"OK: MIST volumes={misters.Length} state={(on ? "on" : "off")}");
+            }, isCheat: true);
+
+            new Terminal.ConsoleCommand("cli_piece_health", "List building pieces near the local player with stored health, full health and the active damage visual: cli_piece_health [radius=30] [nameFilter]", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            {
+                float radius = 30f;
+                if (args.Length >= 2)
+                {
+                    float.TryParse(args[1], out radius);
+                }
+
+                string? filter = args.Length >= 3 ? args[2] : null;
+                PieceHealth(Mathf.Clamp(radius, 1f, 200f), filter, args.Context.AddString);
+            }, isCheat: true);
+
+            new Terminal.ConsoleCommand("cli_piece_set_health", "Set building pieces near the local player to a percentage of full health and refresh their damage visuals: cli_piece_set_health <pct> [radius=30] [nameFilter]", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            {
+                if (args.Length < 2 || !float.TryParse(args[1], out float pct))
+                {
+                    args.Context.AddString("Usage: cli_piece_set_health <pct> [radius=30] [nameFilter]");
+                    return;
+                }
+
+                float radius = 30f;
+                if (args.Length >= 3)
+                {
+                    float.TryParse(args[2], out radius);
+                }
+
+                string? filter = args.Length >= 4 ? args[3] : null;
+                PieceSetHealth(Mathf.Clamp(pct, 0.1f, 100f), Mathf.Clamp(radius, 1f, 200f), filter, args.Context.AddString);
+            }, isCheat: true);
+
             new Terminal.ConsoleCommand("cli_weapon_state", "Print equipped weapon, ammo, and reload state", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
             {
                 PrintWeaponState(args.Context.AddString);
@@ -2539,6 +2634,305 @@ namespace valheimCLI
             camera.transform.position = position;
             camera.transform.rotation = rotation;
             addOutput($"OK: freefly camera at {position.x:F1},{position.y:F1},{position.z:F1} yaw={yaw:F1} pitch={pitch:F1}");
+        }
+
+        public static void WorldDump(int step, string? directory, Action<string> addOutput)
+        {
+            WorldGenerator world = WorldGenerator.instance;
+            if (world == null)
+            {
+                addOutput("ERROR: WorldGenerator not available");
+                return;
+            }
+
+            const float halfExtent = 10000f;
+            string dir = string.IsNullOrWhiteSpace(directory) ? BuildWorldDumpDirectory() : directory!;
+            Directory.CreateDirectory(dir);
+            string worldPath = Path.Combine(dir, "world.csv");
+            string locationsPath = Path.Combine(dir, "locations.csv");
+            var invariant = System.Globalization.CultureInfo.InvariantCulture;
+            Stopwatch stopwatch = Stopwatch.StartNew();
+
+            int samples = 0;
+            using (StreamWriter writer = new StreamWriter(worldPath, false, new System.Text.UTF8Encoding(false)))
+            {
+                writer.WriteLine("x,z,height,biome,river");
+                for (float z = -halfExtent; z <= halfExtent; z += step)
+                {
+                    for (float x = -halfExtent; x <= halfExtent; x += step)
+                    {
+                        float height = world.GetHeight(x, z);
+                        Heightmap.Biome biome = world.GetBiome(x, z);
+                        world.GetRiverWeight(x, z, out float river, out _);
+                        writer.Write(x.ToString("F0", invariant));
+                        writer.Write(',');
+                        writer.Write(z.ToString("F0", invariant));
+                        writer.Write(',');
+                        writer.Write(height.ToString("F1", invariant));
+                        writer.Write(',');
+                        writer.Write(biome.ToString());
+                        writer.Write(',');
+                        writer.WriteLine(river.ToString("F2", invariant));
+                        samples++;
+                    }
+                }
+            }
+
+            int locations = 0;
+            using (StreamWriter writer = new StreamWriter(locationsPath, false, new System.Text.UTF8Encoding(false)))
+            {
+                writer.WriteLine("name,x,z,radius");
+                IEnumerable<ZoneSystem.LocationInstance>? list = ZoneSystem.instance != null ? ZoneSystem.instance.GetLocationList() : null;
+                if (list != null)
+                {
+                    foreach (ZoneSystem.LocationInstance location in list)
+                    {
+                        string name = location.m_location.m_prefab.Name;
+                        writer.WriteLine($"{name},{location.m_position.x.ToString("F1", invariant)},{location.m_position.z.ToString("F1", invariant)},{location.m_location.m_exteriorRadius.ToString("F1", invariant)}");
+                        locations++;
+                    }
+                }
+            }
+
+            addOutput($"OK: WORLD_DUMP samples={samples} step={step} locations={locations} ms={stopwatch.ElapsedMilliseconds} world={worldPath} locations={locationsPath}");
+        }
+
+        private static string BuildWorldDumpDirectory()
+        {
+            string worldName = WorldGenerator.instance != null && WorldGenerator.instance.m_world != null
+                ? WorldGenerator.instance.m_world.m_name
+                : "unknown-world";
+            return Path.Combine(Utils.GetSaveDataPath(FileHelpers.FileSource.Local), "valheimCLI", "world-dumps", worldName);
+        }
+
+        public static void ZoneReady(float x, float z, float radius, Action<string> addOutput)
+        {
+            if (ZoneSystem.instance == null || ZNetScene.instance == null)
+            {
+                addOutput("ZONE_READY ready=false reason=no-world");
+                return;
+            }
+
+            Vector2i min = ZoneSystem.GetZone(new Vector3(x - radius, 0f, z - radius));
+            Vector2i max = ZoneSystem.GetZone(new Vector3(x + radius, 0f, z + radius));
+            int zones = 0;
+            int loaded = 0;
+            for (int zx = min.x; zx <= max.x; zx++)
+            {
+                for (int zy = min.y; zy <= max.y; zy++)
+                {
+                    zones++;
+                    if (ZoneSystem.instance.IsZoneLoaded(new Vector2i(zx, zy)))
+                    {
+                        loaded++;
+                    }
+                }
+            }
+
+            int objects = 0;
+            float radiusSq = radius * radius;
+            foreach (ZNetView view in ZNetScene.instance.m_instances.Values)
+            {
+                if (view == null || !view.IsValid())
+                {
+                    continue;
+                }
+
+                Vector3 position = view.transform.position;
+                float dx = position.x - x;
+                float dz = position.z - z;
+                if (dx * dx + dz * dz <= radiusSq)
+                {
+                    objects++;
+                }
+            }
+
+            bool ready = zones > 0 && loaded == zones;
+            addOutput($"ZONE_READY ready={(ready ? "true" : "false")} zones={zones} loaded={loaded} objects={objects} radius={radius:F0}");
+        }
+
+        public static void ClearView(float x, float z, float radius, Action<string> addOutput)
+        {
+            if (ZNetScene.instance == null)
+            {
+                addOutput("ERROR: world not loaded");
+                return;
+            }
+
+            List<ZNetView> victims = new List<ZNetView>();
+            Dictionary<string, int> byKind = new Dictionary<string, int>();
+            float radiusSq = radius * radius;
+            foreach (ZNetView view in ZNetScene.instance.m_instances.Values)
+            {
+                if (view == null || !view.IsValid())
+                {
+                    continue;
+                }
+
+                Vector3 position = view.transform.position;
+                float dx = position.x - x;
+                float dz = position.z - z;
+                if (dx * dx + dz * dz > radiusSq)
+                {
+                    continue;
+                }
+
+                GameObject go = view.gameObject;
+                if (go.GetComponent<Piece>() != null || go.GetComponent<Character>() != null ||
+                    go.GetComponent<ItemDrop>() != null || go.GetComponent<LocationProxy>() != null)
+                {
+                    continue;
+                }
+
+                string? kind = null;
+                if (go.GetComponent<TreeBase>() != null)
+                {
+                    kind = "tree";
+                }
+                else if (go.GetComponent<TreeLog>() != null)
+                {
+                    kind = "log";
+                }
+                else if (go.GetComponent<MineRock5>() != null || go.GetComponent<MineRock>() != null)
+                {
+                    kind = "rock";
+                }
+                else if (go.GetComponent<Destructible>() != null)
+                {
+                    kind = "destructible";
+                }
+
+                if (kind == null)
+                {
+                    continue;
+                }
+
+                victims.Add(view);
+                byKind.TryGetValue(kind, out int count);
+                byKind[kind] = count + 1;
+            }
+
+            foreach (ZNetView view in victims)
+            {
+                if (view != null && view.IsValid())
+                {
+                    ZNetScene.instance.Destroy(view.gameObject);
+                }
+            }
+
+            string summary = string.Join(" ", byKind.Select(kv => $"{kv.Key}={kv.Value}"));
+            addOutput($"OK: CLEAR_VIEW removed={victims.Count} radius={radius:F0} at={x:F0},{z:F0} {summary}".TrimEnd());
+        }
+
+        private static string DescribeDamageVisual(WearNTear wearNTear)
+        {
+            if (wearNTear.m_new == null && wearNTear.m_worn == null && wearNTear.m_broken == null)
+            {
+                return "none";
+            }
+
+            if (wearNTear.m_broken != null && wearNTear.m_broken.activeSelf)
+            {
+                return "broken";
+            }
+
+            if (wearNTear.m_worn != null && wearNTear.m_worn.activeSelf)
+            {
+                return "worn";
+            }
+
+            return "new";
+        }
+
+        private static bool PieceMatches(ZNetView view, Vector3 origin, float radius, string? filter, out WearNTear wearNTear)
+        {
+            wearNTear = null!;
+            if (view == null || !view.IsValid())
+            {
+                return false;
+            }
+
+            if (Vector3.Distance(view.transform.position, origin) > radius)
+            {
+                return false;
+            }
+
+            WearNTear component = view.GetComponent<WearNTear>();
+            if (component == null)
+            {
+                return false;
+            }
+
+            if (!string.IsNullOrEmpty(filter) && view.name.IndexOf(filter, StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                return false;
+            }
+
+            wearNTear = component;
+            return true;
+        }
+
+        public static void PieceHealth(float radius, string? filter, Action<string> addOutput)
+        {
+            if (Player.m_localPlayer == null || ZNetScene.instance == null)
+            {
+                addOutput("ERROR: No local player or world");
+                return;
+            }
+
+            Vector3 origin = Player.m_localPlayer.transform.position;
+            int total = 0;
+            Dictionary<string, int> byVisual = new Dictionary<string, int>();
+            const int maxLines = 40;
+            foreach (KeyValuePair<ZDO, ZNetView> entry in ZNetScene.instance.m_instances)
+            {
+                if (entry.Key == null || !PieceMatches(entry.Value, origin, radius, filter, out WearNTear wearNTear))
+                {
+                    continue;
+                }
+
+                total++;
+                float stored = entry.Key.GetFloat(ZDOVars.s_health, -1f);
+                string visual = DescribeDamageVisual(wearNTear);
+                byVisual.TryGetValue(visual, out int count);
+                byVisual[visual] = count + 1;
+                if (total <= maxLines)
+                {
+                    Vector3 position = entry.Value.transform.position;
+                    float pct = stored >= 0f && wearNTear.m_health > 0f ? stored / wearNTear.m_health * 100f : -1f;
+                    addOutput($"PIECE {entry.Value.name.Replace("(Clone)", "")} stored={stored:F1} full={wearNTear.m_health:F0} pct={pct:F0} visual={visual} pos={position.x:F1},{position.y:F1},{position.z:F1}");
+                }
+            }
+
+            string summary = string.Join(" ", byVisual.Select(kv => $"{kv.Key}={kv.Value}"));
+            addOutput($"OK: PIECE_HEALTH total={total} listed={Math.Min(total, maxLines)} radius={radius:F0} {summary}".TrimEnd());
+        }
+
+        public static void PieceSetHealth(float pct, float radius, string? filter, Action<string> addOutput)
+        {
+            if (Player.m_localPlayer == null || ZNetScene.instance == null)
+            {
+                addOutput("ERROR: No local player or world");
+                return;
+            }
+
+            Vector3 origin = Player.m_localPlayer.transform.position;
+            int changed = 0;
+            foreach (KeyValuePair<ZDO, ZNetView> entry in ZNetScene.instance.m_instances)
+            {
+                if (entry.Key == null || !PieceMatches(entry.Value, origin, radius, filter, out WearNTear wearNTear))
+                {
+                    continue;
+                }
+
+                float health = wearNTear.m_health * pct / 100f;
+                entry.Key.Set(ZDOVars.s_health, health);
+                // Vanilla refreshes the damage visual through this RPC on every client, the owner included.
+                entry.Value.InvokeRPC(ZNetView.Everybody, "RPC_HealthChanged", health);
+                changed++;
+            }
+
+            addOutput($"OK: PIECE_SET_HEALTH changed={changed} pct={pct:F0} radius={radius:F0}");
         }
 
         public static void AimAtNearestCharacter(string requestedName, float radius, float heightOffset, Action<string> addOutput)
