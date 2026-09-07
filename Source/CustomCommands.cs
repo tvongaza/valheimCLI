@@ -70,18 +70,19 @@ namespace valheimCLI
                 GotoLocation(args[1], args.Context.AddString);
             }, isCheat: true);
 
-            new Terminal.ConsoleCommand("cli_teleport", "Teleport the player to exact coordinates: cli_teleport <x> <y> <z>", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            new Terminal.ConsoleCommand("cli_teleport", "Teleport the player to exact coordinates: cli_teleport <x> <y> <z> [instant]. 'instant' skips the distant-teleport fade and its several-second landing delay", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
             {
                 if (args.Length < 4 ||
                     !float.TryParse(args[1], out float teleportX) ||
                     !float.TryParse(args[2], out float teleportY) ||
                     !float.TryParse(args[3], out float teleportZ))
                 {
-                    args.Context.AddString("Usage: cli_teleport <x> <y> <z>");
+                    args.Context.AddString("Usage: cli_teleport <x> <y> <z> [instant]");
                     return;
                 }
 
-                TeleportPlayer(new Vector3(teleportX, teleportY, teleportZ), args.Context.AddString);
+                bool instant = args.Length > 4 && string.Equals(args[4], "instant", StringComparison.OrdinalIgnoreCase);
+                TeleportPlayer(new Vector3(teleportX, teleportY, teleportZ), args.Context.AddString, !instant);
             }, isCheat: true);
 
             new Terminal.ConsoleCommand("cli_find_locations", "Find placed locations by prefab or group text: cli_find_locations <text> [limit]", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
@@ -280,6 +281,43 @@ namespace valheimCLI
                 ListNearbyPrefabs(radius, args.Context.AddString);
             }, isCheat: true);
 
+            new Terminal.ConsoleCommand("cli_prefabs_at", "List prefab objects near a world coordinate, independent of where the player stands: cli_prefabs_at <x> <y> <z> [radius=30]", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            {
+                if (args.Length < 4 ||
+                    !float.TryParse(args[1], out float atX) ||
+                    !float.TryParse(args[2], out float atY) ||
+                    !float.TryParse(args[3], out float atZ))
+                {
+                    args.Context.AddString("Usage: cli_prefabs_at <x> <y> <z> [radius=30]");
+                    return;
+                }
+
+                float atRadius = 30f;
+                if (args.Length >= 5)
+                {
+                    float.TryParse(args[4], out atRadius);
+                }
+
+                ListPrefabsAt(new Vector3(atX, atY, atZ), Mathf.Clamp(atRadius, 0.5f, 60f), args.Context.AddString);
+            }, isCheat: true);
+
+            new Terminal.ConsoleCommand("cli_destroy_nearby_prefabs", "Destroy net objects near the player whose prefab name contains a pattern: cli_destroy_nearby_prefabs <pattern> [radius=15]", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            {
+                if (args.Length < 2)
+                {
+                    args.Context.AddString("Usage: cli_destroy_nearby_prefabs <pattern> [radius=15]");
+                    return;
+                }
+
+                float destroyRadius = 15f;
+                if (args.Length >= 3)
+                {
+                    float.TryParse(args[2], out destroyRadius);
+                }
+
+                DestroyNearbyPrefabs(args[1], Mathf.Clamp(destroyRadius, 0.5f, 60f), args.Context.AddString);
+            }, isCheat: true);
+
             new Terminal.ConsoleCommand("cli_destroy_nearby_characters", "Destroy nearby non-player characters by prefab/name: cli_destroy_nearby_characters <name|*> [radius]", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
             {
                 if (args.Length < 2)
@@ -430,6 +468,23 @@ namespace valheimCLI
                 }
 
                 FreeFlyPose(new Vector3(camX, camY, camZ), new Vector3(lookX, lookY, lookZ), args.Context.AddString);
+            }, isCheat: true);
+
+            new Terminal.ConsoleCommand("cli_freefly_release", "Turn the free-fly camera off and return it to the player", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            {
+                GameCamera camera = GameCamera.instance;
+                if (camera == null)
+                {
+                    args.Context.AddString("ERROR: GameCamera not available");
+                    return;
+                }
+
+                if (camera.m_freeFly)
+                {
+                    camera.ToggleFreeFly();
+                }
+
+                args.Context.AddString("OK: freefly off, camera returned to the player");
             }, isCheat: true);
 
             new Terminal.ConsoleCommand("cli_world_dump", "Sample the world generator to CSV for offline analysis: cli_world_dump [step=50] [dir]. Writes world.csv (x,z,height,biome,river) over the full map and locations.csv (name,x,z,radius)", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
@@ -1326,7 +1381,7 @@ namespace valheimCLI
             addOutput($"OK: MWL_CLEAR_SHIPMENTS requested={snapshot.Count}");
         }
 
-        public static void TeleportPlayer(Vector3 position, Action<string> addOutput)
+        public static void TeleportPlayer(Vector3 position, Action<string> addOutput, bool distant = true)
         {
             Player player = Player.m_localPlayer;
             if (player == null)
@@ -1335,8 +1390,8 @@ namespace valheimCLI
                 return;
             }
 
-            player.TeleportTo(position, player.transform.rotation, distantTeleport: true);
-            addOutput($"OK: Teleported to {position.x:F1}, {position.y:F1}, {position.z:F1}");
+            player.TeleportTo(position, player.transform.rotation, distantTeleport: distant);
+            addOutput($"OK: Teleported to {position.x:F1}, {position.y:F1}, {position.z:F1} distant={distant}");
         }
 
         public static void GotoLocation(string locationNameOrGroup, Action<string> addOutput)
@@ -2442,7 +2497,16 @@ namespace valheimCLI
             }
 
             radius = Mathf.Clamp(radius, 0.5f, 30f);
-            Vector3 playerPos = player.transform.position;
+            ListPrefabsAt(player.transform.position, radius, addOutput);
+        }
+
+        /// <summary>
+        /// Position-anchored census. Unlike ListNearbyPrefabs it is immune to
+        /// the player moving mid-measurement; the anchor must still be within
+        /// the player's loaded range.
+        /// </summary>
+        public static void ListPrefabsAt(Vector3 playerPos, float radius, Action<string> addOutput)
+        {
             Collider[] colliders = Physics.OverlapSphere(playerPos, radius);
             Dictionary<GameObject, float> found = new();
             foreach (Collider collider in colliders)
@@ -2474,6 +2538,55 @@ namespace valheimCLI
         {
             int cloneIndex = name.IndexOf("(Clone)", StringComparison.Ordinal);
             return cloneIndex >= 0 ? name.Substring(0, cloneIndex) : name;
+        }
+
+        public static void DestroyNearbyPrefabs(string pattern, float radius, Action<string> addOutput)
+        {
+            Player player = Player.m_localPlayer;
+            if (player == null)
+            {
+                addOutput("ERROR: No local player found");
+                return;
+            }
+
+            if (ZNetScene.instance == null)
+            {
+                addOutput("ERROR: ZNetScene is not ready");
+                return;
+            }
+
+            Collider[] colliders = Physics.OverlapSphere(player.transform.position, radius);
+            HashSet<ZNetView> targets = new HashSet<ZNetView>();
+            foreach (Collider collider in colliders)
+            {
+                if (collider.GetComponentInParent<Player>() != null)
+                {
+                    continue;
+                }
+
+                ZNetView view = collider.GetComponentInParent<ZNetView>();
+                if (view == null || !view.IsValid())
+                {
+                    continue;
+                }
+
+                if (CleanPrefabName(view.gameObject.name).IndexOf(pattern, StringComparison.OrdinalIgnoreCase) < 0)
+                {
+                    continue;
+                }
+
+                targets.Add(view);
+            }
+
+            int destroyed = 0;
+            foreach (ZNetView view in targets)
+            {
+                view.ClaimOwnership();
+                ZNetScene.instance.Destroy(view.gameObject);
+                destroyed++;
+            }
+
+            addOutput($"OK: DESTROYED pattern={pattern} radius={radius:F1} count={destroyed}");
         }
 
         public static void DestroyNearbyCharacters(string requestedName, float radius, Action<string> addOutput)
@@ -5323,7 +5436,7 @@ namespace valheimCLI
                 HeightAboveGround = heightAboveGround
             };
 
-            details = $"position={position.x:F1},{position.y:F1},{position.z:F1}, heightAboveGround={heightAboveGround:F1}, health={player.GetHealth():F1}, playerInIntro={snapshot.PlayerInIntro}, playerAttached={snapshot.PlayerAttached}, playerDead={snapshot.PlayerDead}, valkyrieActive={snapshot.ValkyrieActive}, guardianPower={player.GetGuardianPowerName()}, deathlinkChoice={deathlinkChoice}";
+            details = $"position={position.x:F1},{position.y:F1},{position.z:F1}, heightAboveGround={heightAboveGround:F1}, health={player.GetHealth():F1}, playerTeleporting={player.IsTeleporting()}, playerInIntro={snapshot.PlayerInIntro}, playerAttached={snapshot.PlayerAttached}, playerDead={snapshot.PlayerDead}, valkyrieActive={snapshot.ValkyrieActive}, guardianPower={player.GetGuardianPowerName()}, deathlinkChoice={deathlinkChoice}";
             return true;
         }
 
