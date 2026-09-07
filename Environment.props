@@ -62,6 +62,10 @@
             <HintPath>$(VALHEIM_MANAGED)/UnityEngine.ImageConversionModule.dll</HintPath>
             <Private>false</Private>
         </Reference>
+        <Reference Include="UnityEngine.ScreenCaptureModule">
+            <HintPath>$(VALHEIM_MANAGED)/UnityEngine.ScreenCaptureModule.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
         <Reference Include="UnityEngine.InputLegacyModule">
             <HintPath>$(VALHEIM_MANAGED)/UnityEngine.InputLegacyModule.dll</HintPath>
             <Private>false</Private>
