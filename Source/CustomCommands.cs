@@ -487,6 +487,22 @@ namespace valheimCLI
                 args.Context.AddString("OK: freefly off, camera returned to the player");
             }, isCheat: true);
 
+            new Terminal.ConsoleCommand("cli_screenshot", "Save a PNG of the current game view: cli_screenshot [name|path] [supersize=1]. A bare name goes to <save data>/valheimCLI/screenshots/<world>/<name>.png", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            {
+                string name = args.Length >= 2 ? args[1] : DateTime.Now.ToString("yyyyMMdd-HHmmss");
+                int supersize = 1;
+                if (args.Length >= 3 && (!int.TryParse(args[2], out supersize) || supersize < 1 || supersize > 4))
+                {
+                    args.Context.AddString("Usage: cli_screenshot [name|path] [supersize=1..4]");
+                    return;
+                }
+
+                string path = ResolveScreenshotPath(name);
+                Directory.CreateDirectory(Path.GetDirectoryName(path) ?? ".");
+                ScreenCapture.CaptureScreenshot(path, supersize);
+                args.Context.AddString($"OK: screenshot queued path={path} size={Screen.width * supersize}x{Screen.height * supersize}");
+            }, isCheat: true);
+
             new Terminal.ConsoleCommand("cli_world_dump", "Sample the world generator to CSV for offline analysis: cli_world_dump [step=50] [dir]. Writes world.csv (x,z,height,biome,river) over the full map and locations.csv (name,x,z,radius)", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
             {
                 int step = 50;
@@ -4736,6 +4752,24 @@ namespace valheimCLI
             Directory.CreateDirectory(Path.GetDirectoryName(outputPath) ?? ".");
             saveMinimapMethod.Invoke(null, new object[] { outputPath, resolution });
             addOutput($"OK: Better Continents minimap screenshot queued path={outputPath} size={resolution}x{resolution}");
+        }
+
+        private static string ResolveScreenshotPath(string name)
+        {
+            if (!name.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+            {
+                name += ".png";
+            }
+
+            if (Path.IsPathRooted(name))
+            {
+                return name;
+            }
+
+            string worldName = WorldGenerator.instance != null && WorldGenerator.instance.m_world != null
+                ? WorldGenerator.instance.m_world.m_name
+                : "no-world";
+            return Path.Combine(Utils.GetSaveDataPath(FileHelpers.FileSource.Local), "valheimCLI", "screenshots", worldName, name);
         }
 
         private static string BuildBetterContinentsScreenshotPath()
