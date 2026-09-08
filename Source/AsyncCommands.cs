@@ -231,7 +231,19 @@ namespace valheimCLI
                 CustomCommands.ZoneReady(target.x, target.z, radius, line => zoneLine = line);
                 if (zoneLine.Contains("ready=true"))
                 {
-                    ctx.Output($"OK: ARRIVE position={p.x:F1},{p.y:F1},{p.z:F1} retries={retries} ms={clock.ElapsedMilliseconds} {zoneLine}");
+                    // A target given well above the ground (site files use y=60) would drop the
+                    // player: fall damage, a red flash over the next capture, seconds of falling.
+                    // Set the player down once the ground is there.
+                    bool grounded = false;
+                    if (ZoneSystem.instance != null && ZoneSystem.instance.GetGroundHeight(p, out float ground) && p.y - ground > 1f)
+                    {
+                        player.transform.position = new Vector3(p.x, ground + 0.3f, p.z);
+                        if (player.m_body != null)
+                            player.m_body.linearVelocity = Vector3.zero;
+                        p = player.transform.position;
+                        grounded = true;
+                    }
+                    ctx.Output($"OK: ARRIVE position={p.x:F1},{p.y:F1},{p.z:F1} grounded={grounded} retries={retries} ms={clock.ElapsedMilliseconds} {zoneLine}");
                     yield break;
                 }
                 pending = zoneLine;
@@ -498,6 +510,8 @@ namespace valheimCLI
             Hud hud = Hud.instance;
             if (hud != null && hud.m_loadingScreen != null && hud.m_loadingScreen.gameObject.activeSelf && hud.m_loadingScreen.alpha > 0f)
                 reasons.Add($"hud_fade:{hud.m_loadingScreen.alpha:F2}");
+            if (hud != null && hud.m_damageScreen != null && hud.m_damageScreen.gameObject.activeSelf && hud.m_damageScreen.color.a > 0f)
+                reasons.Add($"hud_damage_flash:{hud.m_damageScreen.color.a:F2}");
             Player player = Player.m_localPlayer;
             if (player != null && player.IsTeleporting())
                 reasons.Add("player_teleporting");
