@@ -493,6 +493,15 @@ namespace valheimCLI
             if (envMan != null && envMan.m_nextEnv != null)
                 reasons.Add($"env_transition:{envMan.m_currentEnv?.m_name}->{envMan.m_nextEnv.m_name}");
 
+            // The HUD's black loading screen fades in over a teleport and out afterwards;
+            // a frame captured through it is dark.
+            Hud hud = Hud.instance;
+            if (hud != null && hud.m_loadingScreen != null && hud.m_loadingScreen.gameObject.activeSelf && hud.m_loadingScreen.alpha > 0f)
+                reasons.Add($"hud_fade:{hud.m_loadingScreen.alpha:F2}");
+            Player player = Player.m_localPlayer;
+            if (player != null && player.IsTeleporting())
+                reasons.Add("player_teleporting");
+
             return string.Join(";", reasons);
         }
 
