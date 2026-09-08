@@ -26,6 +26,7 @@ namespace valheimCLI
         {
             RouteController.Register();
             BuildCommands.Register();
+            AsyncCommands.Register();
 
             new Terminal.ConsoleCommand("cli_create_character", "Create and select a local character: cli_create_character <name> [--replace] [--local]", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
             {
@@ -547,7 +548,7 @@ namespace valheimCLI
                     float.TryParse(args[3], out radius);
                 }
 
-                ClearView(x, z, Mathf.Clamp(radius, 1f, 120f), args.Context.AddString);
+                AsyncCommands.StartClearView(x, z, Mathf.Clamp(radius, 1f, 120f), args.Context.AddString);
             }, isCheat: true);
 
             new Terminal.ConsoleCommand("cli_mist", "Capture helper: switch every loaded Mistlands mist volume off or back on: cli_mist <off|on>. Volumes in zones loaded later need the command again", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
@@ -2888,8 +2889,17 @@ namespace valheimCLI
                 return;
             }
 
-            List<ZNetView> victims = new List<ZNetView>();
             Dictionary<string, int> byKind = new Dictionary<string, int>();
+            List<ZNetView> victims = CollectClearViewTargets(x, z, radius, byKind);
+            DestroyViews(victims);
+            string summary = string.Join(" ", byKind.Select(kv => $"{kv.Key}={kv.Value}"));
+            addOutput($"OK: CLEAR_VIEW removed={victims.Count} radius={radius:F0} at={x:F0},{z:F0} {summary}".TrimEnd());
+        }
+
+        /// <summary>Trees, logs, rocks and other destructibles within the radius (pieces, characters, items, locations excluded).</summary>
+        public static List<ZNetView> CollectClearViewTargets(float x, float z, float radius, Dictionary<string, int> byKind)
+        {
+            List<ZNetView> victims = new List<ZNetView>();
             float radiusSq = radius * radius;
             foreach (ZNetView view in ZNetScene.instance.m_instances.Values)
             {
@@ -2941,6 +2951,11 @@ namespace valheimCLI
                 byKind[kind] = count + 1;
             }
 
+            return victims;
+        }
+
+        public static void DestroyViews(List<ZNetView> victims)
+        {
             foreach (ZNetView view in victims)
             {
                 if (view != null && view.IsValid())
@@ -2949,8 +2964,6 @@ namespace valheimCLI
                 }
             }
 
-            string summary = string.Join(" ", byKind.Select(kv => $"{kv.Key}={kv.Value}"));
-            addOutput($"OK: CLEAR_VIEW removed={victims.Count} radius={radius:F0} at={x:F0},{z:F0} {summary}".TrimEnd());
         }
 
         private static string DescribeDamageVisual(WearNTear wearNTear)
@@ -4753,6 +4766,8 @@ namespace valheimCLI
             saveMinimapMethod.Invoke(null, new object[] { outputPath, resolution });
             addOutput($"OK: Better Continents minimap screenshot queued path={outputPath} size={resolution}x{resolution}");
         }
+
+        public static string ResolveScreenshotPathPublic(string name) => ResolveScreenshotPath(name);
 
         private static string ResolveScreenshotPath(string name)
         {

@@ -30,6 +30,7 @@
 
   <ItemGroup>
     <Compile Remove="CLI\**" />
+    <Compile Remove="Tests\**" />
     <None Remove="CLI\**" />
   </ItemGroup>
 

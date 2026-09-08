@@ -167,11 +167,14 @@ public class ValheimClient : IDisposable
         return response == "UNSUBSCRIBED";
     }
 
+    /// <summary>Server-side wait for a command's completion; the response holds its whole output.</summary>
+    public TimeSpan CommandTimeout { get; set; } = TimeSpan.FromSeconds(120);
+
     public List<string> SendCommand(string command)
     {
         EnsureConnected();
 
-        _writer!.WriteLine($"CMD:{command}");
+        _writer!.WriteLine($"CMDT:{CommandTimeout.TotalSeconds.ToString("F0", System.Globalization.CultureInfo.InvariantCulture)}:{command}");
 
         List<string> result = new();
 
