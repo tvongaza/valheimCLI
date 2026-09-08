@@ -341,8 +341,30 @@ namespace valheimCLI
                 ctx.Output($"ERROR: code=capture_timeout name={name} pending={pending}");
                 yield break;
             }
+            // Grass: the clutter system places one patch per frame around the camera after
+            // it moves, and a patch with nothing to place is never recorded, so "done" is
+            // the patch count standing still for three frames (bounded to 3 s).
+            int grassFrames = 0;
+            int lastPatches = -1;
+            int quiet = 0;
+            Stopwatch grass = Stopwatch.StartNew();
+            while (grass.Elapsed.TotalSeconds < 3 && !ctx.Cancelled)
+            {
+                int patches = GrassPatchCount();
+                if (patches == lastPatches)
+                {
+                    if (++quiet >= 3) break;
+                }
+                else
+                {
+                    quiet = 0;
+                }
+                lastPatches = patches;
+                grassFrames++;
+                yield return null;
+            }
             long readyMs = clock.ElapsedMilliseconds;
-            // Two completed renders with the new pose, terrain and weather before the capture.
+            // Two completed renders with the new pose, terrain, grass and weather before the capture.
             yield return new WaitForEndOfFrame();
             yield return new WaitForEndOfFrame();
 
@@ -415,7 +437,16 @@ namespace valheimCLI
                 ctx.Output($"ERROR: code=capture_verify_failed path={path} bytes={finalSize} expected={lastSize}");
                 yield break;
             }
-            ctx.Output($"OK: CAPTURE name={name} path={path} bytes={finalSize} size={Screen.width * supersize}x{Screen.height * supersize} ready_ms={readyMs} frames_waited={frames} total_ms={clock.ElapsedMilliseconds}");
+            ctx.Output($"OK: CAPTURE name={name} path={path} bytes={finalSize} size={Screen.width * supersize}x{Screen.height * supersize} ready_ms={readyMs} frames_waited={frames} grass_frames={grassFrames} total_ms={clock.ElapsedMilliseconds}");
+        }
+
+        /// <summary>Grass patches the clutter system currently holds (0 when it is off or absent).</summary>
+        public static int GrassPatchCount()
+        {
+            ClutterSystem clutter = ClutterSystem.instance;
+            if (clutter == null || clutter.m_patches == null)
+                return 0;
+            return clutter.m_patches.Count;
         }
 
         /// <summary>PNG signature at the start and the IEND chunk at the end: the writer has finished.</summary>
