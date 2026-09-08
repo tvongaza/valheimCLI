@@ -143,6 +143,14 @@ namespace valheimCLI
                 while (true)
                 {
                     object? current;
+                    // A request that hit its timeout was abandoned by the server: stop the
+                    // work here so a late capture, teleport or poll cannot land in the middle
+                    // of the next request (its output would be dropped anyway).
+                    if (handle != null && handle.Abandoned)
+                    {
+                        valheimCLIPlugin.Log.LogWarning($"Async command #{handle.Id} cancelled: its request timed out");
+                        break;
+                    }
                     try
                     {
                         if (!body.MoveNext()) break;

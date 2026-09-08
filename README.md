@@ -15,6 +15,11 @@ cp bin/Debug/valheimCLI.dll ~/Library/Application\ Support/Steam/steamapps/commo
 
 ## Usage
 
+The CLI targets net9.0. On a machine with only a newer runtime installed
+(e.g. .NET 10), run it with `DOTNET_ROLL_FORWARD=Major` set, or build with
+`dotnet build -p:TargetFramework=net10.0`.
+
+
 ```bash
 # Interactive
 ./CLI/bin/Debug/net9.0/valheim-cli
@@ -61,6 +66,10 @@ wait). A command that misses its timeout is abandoned: the response says so
 and any output it produces later is dropped, with a `NOTE:` line on the next
 response. Scripts no longer need to ask twice for a slow command's output,
 which used to run it twice.
+
+A timed-out async command is cancelled at its next step; a timed-out
+synchronous command keeps running on the game thread and later requests
+queue behind it (the response says which).
 
 Async helpers replace fixed sleeps in capture scripts with one bounded call
 each; the answer names the condition still pending when a deadline passes:

@@ -174,8 +174,10 @@ namespace valheimCLI
                 else
                 {
                     _abandoned.Add(id);
+                    response.Lines.Add(_async.Contains(id)
+                        ? $"ERROR: code=command_timeout message=Command #{id} did not complete in time; it is cancelled and later output is dropped."
+                        : $"ERROR: code=command_timeout message=Command #{id} did not complete in time; it still runs on the game thread (later requests queue behind it) and its output is dropped.");
                     _async.Remove(id);
-                    response.Lines.Add($"ERROR: code=command_timeout message=Command #{id} did not complete in time; later output is dropped.");
                 }
                 if (_orphans.Count > 0)
                 {
