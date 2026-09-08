@@ -787,13 +787,14 @@ namespace valheimCLI
                 // Send captured output or confirmation
                 if (_capturedOutput.Count > 0)
                 {
-                    foreach (var line in _capturedOutput)
+                    foreach (string line in _capturedOutput)
                     {
                         _commandServer?.SendOutput(line);
                     }
                 }
-                else
+                else if (_commandServer == null || !_commandServer.Broker.IsAsync(_commandServer.Broker.CurrentRequestId))
                 {
+                    // An async command answers through its handle later; nothing to confirm here.
                     _commandServer?.SendOutput($"Executed: {command}");
                 }
             }

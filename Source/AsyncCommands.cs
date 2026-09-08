@@ -174,24 +174,29 @@ namespace valheimCLI
             Stopwatch clock = Stopwatch.StartNew();
             int retries = 0;
             CustomCommands.TeleportPlayer(target, _ => { }, distant: false);
-            float lastIssue = 0f;
             string pending = "";
             while (clock.Elapsed.TotalSeconds < timeout)
             {
                 yield return null;
                 Vector3 p = player.transform.position;
                 float dx = p.x - target.x, dz = p.z - target.z;
-                bool there = dx * dx + dz * dz <= 4f && !player.IsTeleporting();
-                if (!there)
+                bool atTarget = dx * dx + dz * dz <= 4f;
+                if (player.IsTeleporting())
                 {
-                    pending = $"player at {p.x:F1},{p.y:F1},{p.z:F1} teleporting={player.IsTeleporting()}";
-                    // A teleport issued while the previous one was still landing is dropped silently.
-                    if (retries < 2 && clock.Elapsed.TotalSeconds - lastIssue > 5f)
-                    {
-                        retries++;
-                        lastIssue = (float)clock.Elapsed.TotalSeconds;
-                        CustomCommands.TeleportPlayer(target, _ => { }, distant: false);
-                    }
+                    pending = $"teleporting, player at {p.x:F1},{p.y:F1},{p.z:F1}";
+                    continue;
+                }
+                if (!atTarget)
+                {
+                    // A non-distant teleport lands 2 s in, and if no floor answers the
+                    // raycast yet (the zone's terrain collider is a frame behind its
+                    // spawn) the game bounces the player back ("portal blocked"). The
+                    // zones are loaded by then, so the next attempt lands.
+                    pending = $"bounced back to {p.x:F1},{p.y:F1},{p.z:F1}";
+                    if (retries >= 3)
+                        break;
+                    retries++;
+                    CustomCommands.TeleportPlayer(target, _ => { }, distant: false);
                     continue;
                 }
                 string zoneLine = "";
@@ -203,7 +208,7 @@ namespace valheimCLI
                 }
                 pending = zoneLine;
             }
-            output($"ERROR: code=arrive_timeout retries={retries} pending={pending}");
+            output($"ERROR: code=arrive_timeout retries={retries} ms={clock.ElapsedMilliseconds} pending={pending}");
         }
 
         // ---- cli_env ----
