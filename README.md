@@ -67,9 +67,17 @@ and any output it produces later is dropped, with a `NOTE:` line on the next
 response. Scripts no longer need to ask twice for a slow command's output,
 which used to run it twice.
 
-A timed-out async command is cancelled at its next step; a timed-out
-synchronous command keeps running on the game thread and later requests
-queue behind it (the response says which).
+On a timeout the response says what became of the command: one that had
+not started is expired and never runs; a synchronous one keeps running on
+the game thread and later requests queue behind it; an async one issues no
+further actions, lets an effect it already started settle (the teleport
+lands, the screenshot file finishes) and only then frees the player and
+camera for the next command. Arrive, env, capture and clear share the
+player and camera and run one at a time; a second one waits its turn.
+The client bounds its own socket wait (`--timeout` plus 5 s) and never
+resends a command that may have executed; it detects an older server
+(no capability line after the greeting) and falls back to `CMD:` with a
+warning.
 
 Async helpers replace fixed sleeps in capture scripts with one bounded call
 each; the answer names the condition still pending when a deadline passes:

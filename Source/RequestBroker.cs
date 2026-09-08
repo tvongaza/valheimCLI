@@ -43,7 +43,9 @@ namespace valheimCLI
         private readonly HashSet<long> _completed = new HashSet<long>();
         private readonly HashSet<long> _async = new HashSet<long>();
         private readonly HashSet<long> _abandoned = new HashSet<long>();
-        private readonly HashSet<long> _waiting = new HashSet<long>();
+        private readonly HashSet<long> _running = new HashSet<long>();
+        private readonly HashSet<long> _expired = new HashSet<long>();
+        private int _expiredSkipped;
         private readonly List<string> _orphans = new List<string>();
         private int _droppedSinceLastResponse;
         private long _lastDroppedFrom;
@@ -65,24 +67,44 @@ namespace valheimCLI
                 Request request = new Request { Id = ++_nextId, Text = text, TimeoutSeconds = timeoutSeconds };
                 _pending.Enqueue(request);
                 _output[request.Id] = new List<string>();
-                _waiting.Add(request.Id);
                 return request;
             }
         }
 
-        /// <summary>Game thread: next request to run.</summary>
+        /// <summary>
+        /// Game thread: next request to run. A request whose caller gave up while
+        /// it was still queued (behind a long command) is expired here and never
+        /// runs: its side effects would land after the caller moved on.
+        /// </summary>
         public bool TryDequeue(out Request request)
         {
             lock (_lock)
             {
-                if (_pending.Count == 0)
+                while (_pending.Count > 0)
                 {
-                    request = null!;
-                    return false;
+                    Request next = _pending.Dequeue();
+                    if (_abandoned.Contains(next.Id))
+                    {
+                        _expired.Add(next.Id);
+                        _expiredSkipped++;
+                        _output.Remove(next.Id);
+                        continue;
+                    }
+                    _running.Add(next.Id);
+                    request = next;
+                    return true;
                 }
-                request = _pending.Dequeue();
-                return true;
+                request = null!;
+                return false;
             }
+        }
+
+        /// <summary>Requests that expired in the queue and were skipped (never executed).</summary>
+        public int ExpiredSkipped { get { lock (_lock) return _expiredSkipped; } }
+
+        public bool IsRunning(long id)
+        {
+            lock (_lock) return _running.Contains(id);
         }
 
         /// <summary>Output from whatever request is executing now (a handler's AddString).</summary>
@@ -127,6 +149,7 @@ namespace valheimCLI
             {
                 _completed.Add(id);
                 _async.Remove(id);
+                _running.Remove(id);
             }
         }
 
@@ -166,7 +189,6 @@ namespace valheimCLI
                     response.Lines.AddRange(lines);
                     _output.Remove(id);
                 }
-                _waiting.Remove(id);
                 if (response.Completed)
                 {
                     _completed.Remove(id);
@@ -174,9 +196,14 @@ namespace valheimCLI
                 else
                 {
                     _abandoned.Add(id);
-                    response.Lines.Add(_async.Contains(id)
-                        ? $"ERROR: code=command_timeout message=Command #{id} did not complete in time; it is cancelled and later output is dropped."
-                        : $"ERROR: code=command_timeout message=Command #{id} did not complete in time; it still runs on the game thread (later requests queue behind it) and its output is dropped.");
+                    string fate;
+                    if (!_running.Contains(id))
+                        fate = "it had not started and will not run.";
+                    else if (_async.Contains(id))
+                        fate = "it issues no further actions; an effect already started (a teleport, a screenshot write) settles first, and its later output is dropped.";
+                    else
+                        fate = "it still runs on the game thread (later requests queue behind it) and its output is dropped.";
+                    response.Lines.Add($"ERROR: code=command_timeout message=Command #{id} did not complete in time; {fate}");
                     _async.Remove(id);
                 }
                 if (_orphans.Count > 0)

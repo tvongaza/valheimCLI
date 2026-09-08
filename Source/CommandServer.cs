@@ -160,6 +160,9 @@ namespace valheimCLI
                 using StreamWriter writer = new StreamWriter(stream, new UTF8Encoding(false)) { AutoFlush = true };
 
                 writer.WriteLine("VALHEIM_CLI_READY");
+                // Capabilities for clients that know to read them; older clients read one
+                // greeting line and ignore lines that are not OUTPUT: or state changes.
+                writer.WriteLine("VALHEIM_CLI_CAPS completion");
 
                 while (_running && client.Connected)
                 {

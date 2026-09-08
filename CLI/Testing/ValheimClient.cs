@@ -56,6 +56,26 @@ public class ValheimClient : IDisposable
                 return false;
             }
 
+            // A server with command completion announces it on the next line; an older
+            // server sends nothing more, so a short read timeout tells them apart.
+            SupportsCompletion = false;
+            int previous = _stream.ReadTimeout;
+            try
+            {
+                _stream.ReadTimeout = 1500;
+                string? caps = _reader.ReadLine();
+                if (caps != null && caps.StartsWith("VALHEIM_CLI_CAPS"))
+                    SupportsCompletion = caps.Contains("completion");
+            }
+            catch (IOException)
+            {
+                // no capability line: older server
+            }
+            finally
+            {
+                _stream.ReadTimeout = previous;
+            }
+
             return true;
         }
         catch (SocketException)
@@ -170,18 +190,53 @@ public class ValheimClient : IDisposable
     /// <summary>Server-side wait for a command's completion; the response holds its whole output.</summary>
     public TimeSpan CommandTimeout { get; set; } = TimeSpan.FromSeconds(120);
 
+    /// <summary>Whether the connected server pairs responses with commands (CMDT); false for older servers.</summary>
+    public bool SupportsCompletion { get; private set; }
+
+    /// <summary>Extra time the client allows for the server's own timeout response before giving up on the socket.</summary>
+    public static readonly TimeSpan ResponseAllowance = TimeSpan.FromSeconds(5);
+
     public List<string> SendCommand(string command)
     {
         EnsureConnected();
 
-        _writer!.WriteLine($"CMDT:{CommandTimeout.TotalSeconds.ToString("F0", System.Globalization.CultureInfo.InvariantCulture)}:{command}");
-
         List<string> result = new();
+        if (SupportsCompletion)
+        {
+            _writer!.WriteLine($"CMDT:{CommandTimeout.TotalSeconds.ToString("F0", System.Globalization.CultureInfo.InvariantCulture)}:{command}");
+        }
+        else
+        {
+            // Older server: it answers after the first output line (or 30 s) and a slow
+            // command's output arrives with the next call. Say so once per connection.
+            if (!_warnedNoCompletion)
+            {
+                _warnedNoCompletion = true;
+                Console.Error.WriteLine("warning: this valheimCLI server has no command completion; --timeout bounds only this client's wait and a slow command's output may arrive with the next call");
+            }
+            _writer!.WriteLine($"CMD:{command}");
+        }
 
+        // The socket wait is bounded: the server's timeout plus an allowance for its
+        // timeout response. On expiry the command is NOT resent: it may have executed.
+        int previousReadTimeout = _stream!.ReadTimeout;
+        _stream.ReadTimeout = (int)Math.Min(int.MaxValue, (CommandTimeout + ResponseAllowance).TotalMilliseconds);
+        try
+        {
         // May receive state change notifications before the response
         while (true)
         {
-            string? line = _reader!.ReadLine();
+            string? line;
+            try
+            {
+                line = _reader!.ReadLine();
+            }
+            catch (IOException)
+            {
+                result.Add($"ERROR: code=client_timeout message=no response within {(CommandTimeout + ResponseAllowance).TotalSeconds:F0}s; the command was not resent (it may have executed); check the server is a valheimCLI with command completion");
+                Disconnect();
+                return result;
+            }
             if (line == null) break;
 
             // Handle state change notifications
@@ -205,9 +260,17 @@ public class ValheimClient : IDisposable
                 break;
             }
         }
+        }
+        finally
+        {
+            if (_stream != null)
+                _stream.ReadTimeout = previousReadTimeout;
+        }
 
         return result;
     }
+
+    private bool _warnedNoCompletion;
 
     public CommandResult ExecuteCommand(string command)
     {

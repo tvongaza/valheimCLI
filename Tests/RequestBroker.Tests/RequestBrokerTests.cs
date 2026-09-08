@@ -94,7 +94,7 @@ public class RequestBrokerTests
         RequestBroker.Response response = broker.Wait(slow, _ => t = t.AddSeconds(1), () => t);
 
         Assert.False(response.Completed);
-        Assert.Contains(response.Lines, l => l.StartsWith("ERROR: code=command_timeout") && l.Contains("cancelled"));
+        Assert.Contains(response.Lines, l => l.StartsWith("ERROR: code=command_timeout") && l.Contains("no further actions"));
         Assert.True(broker.IsAbandoned(id));
         Assert.False(broker.IsAsync(id));
 
