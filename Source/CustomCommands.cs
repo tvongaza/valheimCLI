@@ -1176,6 +1176,26 @@ namespace valheimCLI
                 PrintConnectionStatus(args.Context.AddString);
             });
 
+            new Terminal.ConsoleCommand("cli_create_world", "Create a local world with a KNOWN seed, so a terrain report can be reproduced: cli_create_world <worldName> <seed> [--overwrite]. Writes the world metadata and stops; start it with cli_start_local_world. Runs at the main menu, like the other world commands, so it is not cheat-gated", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            {
+                if (args.Length < 3)
+                {
+                    args.Context.AddString("Usage: cli_create_world <worldName> <seed> [--overwrite]");
+                    return;
+                }
+
+                bool overwrite = false;
+                for (int i = 3; i < args.Length; i++)
+                {
+                    if (args[i].Equals("--overwrite", StringComparison.OrdinalIgnoreCase))
+                    {
+                        overwrite = true;
+                    }
+                }
+
+                CreateWorldWithSeed(args[1], args[2], overwrite, args.Context.AddString);
+            });
+
             new Terminal.ConsoleCommand("cli_start_local_world", "Create/select and start a local world: cli_start_local_world <worldName>", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
             {
                 if (args.Length < 2)
@@ -5134,6 +5154,48 @@ namespace valheimCLI
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// A world with a seed the caller chose. The game's own dialog is the
+        /// only other way to set one, so a seed named in a bug report cannot
+        /// otherwise be reproduced from a script.
+        /// </summary>
+        public static void CreateWorldWithSeed(string worldName, string seed, bool overwrite, Action<string> addOutput)
+        {
+            if (!ValidateWorldName(worldName, out string validationError))
+            {
+                addOutput(validationError);
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(seed))
+            {
+                addOutput("ERROR: Seed must not be empty");
+                return;
+            }
+
+            List<World> existing = SaveSystem.GetWorldList();
+            World? already = existing.Find(candidate => candidate.m_name == worldName);
+            if (already != null && !overwrite)
+            {
+                addOutput($"ERROR: World '{worldName}' already exists (seed {already.m_seedName}). " +
+                          "Pass --overwrite to replace it, or choose another name");
+                return;
+            }
+
+            if (already != null)
+            {
+                World.RemoveWorld(already.m_name, already.m_fileSource);
+                SaveSystem.InvalidateCache();
+            }
+
+            World world = new World(worldName, seed);
+            world.m_fileSource = FileHelpers.FileSource.Local;
+            world.SaveWorldMetaData(DateTime.Now);
+            SaveSystem.InvalidateCache();
+
+            addOutput($"OK: WORLD_CREATED name={world.m_name} seedName={world.m_seedName} seed={world.m_seed} uid={world.m_uid} worldGenVersion={world.m_worldGenVersion}");
         }
 
         private static bool ValidateWorldName(string worldName, out string error)
