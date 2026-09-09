@@ -568,7 +568,7 @@ class Program
                 Message = "Dedicated server join command was accepted."
             });
 
-            using ValheimClient client = new ValheimClient(_host, _port);
+            using ValheimClient client = new ValheimClient(_host, _port) { CommandTimeout = _timeout };
             if (!client.Connect())
             {
                 phases.Add(new LaunchPhase
@@ -660,7 +660,7 @@ class Program
         Console.WriteLine("  --password <pass>     Server password for auto-connect");
         Console.WriteLine("  --password-file <path> Read server password from a file");
         Console.WriteLine("  --json                Print machine-readable JSON for supported commands");
-        Console.WriteLine("  --timeout <duration>  Timeout for wait/join operations, e.g. 120s or 3m");
+        Console.WriteLine("  --timeout <duration>  Timeout for wait/join operations and for a command to complete in-game (default 120s), e.g. 120s or 3m");
         Console.WriteLine("  --interval <duration> Poll interval for wait/join operations");
         Console.WriteLine("  --artifacts <dir>     Test-run artifact directory");
         Console.WriteLine("  --var <key=value>     Set a test variable (can be used multiple times)");
@@ -704,7 +704,7 @@ class Program
     {
         try
         {
-            using ValheimClient client = new ValheimClient(_host, _port);
+            using ValheimClient client = new ValheimClient(_host, _port) { CommandTimeout = _timeout };
             if (!client.Connect())
             {
                 Console.Error.WriteLine($"Cannot connect to Valheim at {_host}:{_port}");
@@ -831,7 +831,7 @@ class Program
     {
         string? group = GetOption(args, "--group");
         string? search = GetOption(args, "--search");
-        using ValheimClient client = new ValheimClient(_host, _port);
+        using ValheimClient client = new ValheimClient(_host, _port) { CommandTimeout = _timeout };
         if (!client.Connect())
         {
             return PrintConnectionFailure();
@@ -870,7 +870,7 @@ class Program
 
     static int RunCommandHelp(string commandName)
     {
-        using ValheimClient client = new ValheimClient(_host, _port);
+        using ValheimClient client = new ValheimClient(_host, _port) { CommandTimeout = _timeout };
         if (!client.Connect())
         {
             return PrintConnectionFailure();
@@ -1068,7 +1068,7 @@ class Program
                 if (client == null || !client.IsConnected)
                 {
                     client?.Dispose();
-                    client = new ValheimClient(_host, _port);
+                    client = new ValheimClient(_host, _port) { CommandTimeout = _timeout };
                     if (!client.Connect())
                     {
                         Console.WriteLine("Failed to connect. Is Valheim running with the mod?");

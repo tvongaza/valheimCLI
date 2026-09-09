@@ -15,6 +15,11 @@ cp bin/Debug/valheimCLI.dll ~/Library/Application\ Support/Steam/steamapps/commo
 
 ## Usage
 
+The CLI targets net9.0. On a machine with only a newer runtime installed
+(e.g. .NET 10), run it with `DOTNET_ROLL_FORWARD=Major` set, or build with
+`dotnet build -p:TargetFramework=net10.0`.
+
+
 ```bash
 # Interactive
 ./CLI/bin/Debug/net9.0/valheim-cli
@@ -49,6 +54,40 @@ valheim> spawn Boar 5
 # Discover commands and their automation metadata
 ./CLI/bin/Debug/net9.0/valheim-cli commands --group cli
 ./CLI/bin/Debug/net9.0/valheim-cli commands --search screenshot --json
+```
+
+## Command Completion And Capture Helpers
+
+A response carries the whole output of its own command: the server waits for
+the game thread to complete the command (or for an async command's coroutine
+to complete it) before answering, up to `--timeout` (default 120s; the wire
+form is `CMDT:<seconds>:<command>`, the older `CMD:<command>` keeps a 30s
+wait). A command that misses its timeout is abandoned: the response says so
+and any output it produces later is dropped, with a `NOTE:` line on the next
+response. Scripts no longer need to ask twice for a slow command's output,
+which used to run it twice.
+
+On a timeout the response says what became of the command: one that had
+not started is expired and never runs; a synchronous one keeps running on
+the game thread and later requests queue behind it; an async one issues no
+further actions, lets an effect it already started settle (the teleport
+lands, the screenshot file finishes) and only then frees the player and
+camera for the next command. Arrive, env, capture and clear share the
+player and camera and run one at a time; a second one waits its turn.
+The client bounds its own socket wait (`--timeout` plus 5 s) and never
+resends a command that may have executed; it detects an older server
+(no capability line after the greeting) and falls back to `CMD:` with a
+warning.
+
+Async helpers replace fixed sleeps in capture scripts with one bounded call
+each; the answer names the condition still pending when a deadline passes:
+
+```bash
+valheim-cli cli_env 0.45 Clear                 # debug time/weather, waits for the 2 s transition
+valheim-cli cli_arrive 331 60 -516 64 30       # teleport, wait for landing + loaded zones (re-teleports once if dropped)
+valheim-cli cli_clear_view 331 -516 45         # destroy clutter, recount next frame, repeat up to 3 passes
+valheim-cli cli_until 30 ready=true road_zone_state 331 -516 64   # poll any command until a line matches
+valheim-cli cli_capture E-side 347.5 57.5 -522.5 331.1 51.5 -515.6  # pose, wait for zones / heightmap rebuilds / weather, render 2 frames, save, wait for the file
 ```
 
 ## Readiness And Exit Codes

@@ -79,13 +79,19 @@ namespace valheimCLI
         {
             if (_commandServer == null) return;
 
-            while (_commandServer.TryGetPendingCommand(out var command) && command != null)
+            while (_commandServer.TryGetPendingRequest(out RequestBroker.Request request))
             {
-                if (string.IsNullOrEmpty(command)) continue;
-
+                string command = request.Text;
+                RequestBroker broker = _commandServer.Broker;
+                broker.CurrentRequestId = request.Id;
                 try
                 {
-                    Log.LogInfo($"Executing CLI command: {command}");
+                    if (string.IsNullOrEmpty(command))
+                    {
+                        _commandServer.SendOutput("ERROR: code=empty_command message=Empty command.");
+                        continue;
+                    }
+                    Log.LogInfo($"Executing CLI command #{request.Id}: {command}");
                     if (!TryExecuteBuiltInCommand(command))
                     {
                         ExecuteCommand(command);
@@ -95,6 +101,13 @@ namespace valheimCLI
                 {
                     _commandServer.SendOutput($"ERROR: code=unexpected_exception message={ex.Message}");
                     Log.LogError($"Command execution error: {ex}");
+                }
+                finally
+                {
+                    // An async handler (BeginAsync) completes its request itself.
+                    if (!broker.IsAsync(request.Id))
+                        broker.Complete(request.Id);
+                    broker.CurrentRequestId = 0;
                 }
             }
         }
@@ -711,6 +724,49 @@ namespace valheimCLI
             return true;
         }
 
+        /// <summary>
+        /// A handler that keeps working after it returns (a coroutine) calls this
+        /// while executing: its request stays open until the handle completes it,
+        /// and output sent through the handle belongs to that request however
+        /// late it arrives (until the request's timeout abandons it).
+        /// </summary>
+        public static AsyncHandle? BeginAsync()
+        {
+            CommandServer? server = Instance?._commandServer;
+            if (server == null) return null;
+            long id = server.Broker.CurrentRequestId;
+            if (id == 0) return null;
+            server.Broker.MarkAsync(id);
+            return new AsyncHandle(server.Broker, id);
+        }
+
+        /// <summary>
+        /// Run a console command now and return its AddString lines instead of
+        /// sending them to the client (cli_until polls with this).
+        /// </summary>
+        public List<string> RunCapturing(string command)
+        {
+            List<string> lines = new List<string>();
+            if (Console.instance == null)
+            {
+                lines.Add("Error: Console not available (game not fully loaded)");
+                return lines;
+            }
+            _capturedOutput.Clear();
+            _capturingOutput = true;
+            try
+            {
+                Console.instance.TryRunCommand(command, silentFail: false, skipAllowedCheck: false);
+                lines.AddRange(_capturedOutput);
+            }
+            finally
+            {
+                _capturingOutput = false;
+                _capturedOutput.Clear();
+            }
+            return lines;
+        }
+
         private void ExecuteCommand(string command, bool skipAllowedCheck = false)
         {
             if (Console.instance == null)
@@ -724,22 +780,21 @@ namespace valheimCLI
 
             try
             {
-                // Execute the command
+                // Execute the command; its AddString output is captured synchronously.
+                // (An earlier 100 ms sleep here stalled the game thread once per command.)
                 Console.instance.TryRunCommand(command, silentFail: false, skipAllowedCheck: skipAllowedCheck);
-
-                // Give a moment for output to be generated
-                System.Threading.Thread.Sleep(100);
 
                 // Send captured output or confirmation
                 if (_capturedOutput.Count > 0)
                 {
-                    foreach (var line in _capturedOutput)
+                    foreach (string line in _capturedOutput)
                     {
                         _commandServer?.SendOutput(line);
                     }
                 }
-                else
+                else if (_commandServer == null || !_commandServer.Broker.IsAsync(_commandServer.Broker.CurrentRequestId))
                 {
+                    // An async command answers through its handle later; nothing to confirm here.
                     _commandServer?.SendOutput($"Executed: {command}");
                 }
             }
@@ -922,6 +977,23 @@ namespace valheimCLI
 
             _lastReloadTime = now;
         }
+    }
+
+    /// <summary>Completes an async request; see valheimCLIPlugin.BeginAsync.</summary>
+    public sealed class AsyncHandle
+    {
+        private readonly RequestBroker _broker;
+        public long Id { get; }
+
+        internal AsyncHandle(RequestBroker broker, long id)
+        {
+            _broker = broker;
+            Id = id;
+        }
+
+        public bool Abandoned => _broker.IsAbandoned(Id);
+        public void Output(string line) => _broker.Output(Id, line);
+        public void Complete() => _broker.Complete(Id);
     }
 
     // Harmony patch to capture console output

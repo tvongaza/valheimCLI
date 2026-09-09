@@ -18,8 +18,9 @@ namespace valheimCLI
         private TcpListener? _listener;
         private Thread? _listenerThread;
         private volatile bool _running;
-        private readonly ConcurrentQueue<string> _pendingCommands = new();
-        private readonly ConcurrentQueue<string> _outputBuffer = new();
+        private readonly RequestBroker _broker = new();
+        /// <summary>Legacy CMD: requests wait this long; CMDT:&lt;seconds&gt;: sets its own.</summary>
+        public const double DefaultTimeoutSeconds = 30;
         private readonly List<TcpClient> _clients = new();
         private readonly object _clientsLock = new();
 
@@ -159,6 +160,9 @@ namespace valheimCLI
                 using StreamWriter writer = new StreamWriter(stream, new UTF8Encoding(false)) { AutoFlush = true };
 
                 writer.WriteLine("VALHEIM_CLI_READY");
+                // Capabilities for clients that know to read them; older clients read one
+                // greeting line and ignore lines that are not OUTPUT: or state changes.
+                writer.WriteLine("VALHEIM_CLI_CAPS completion");
 
                 while (_running && client.Connected)
                 {
@@ -239,35 +243,41 @@ namespace valheimCLI
                             continue;
                         }
 
-                        if (line.StartsWith("CMD:"))
+                        if (line.StartsWith("CMD:") || line.StartsWith("CMDT:"))
                         {
-                            var command = line.Substring(4).Trim();
+                            // CMD:<text> (30 s) or CMDT:<seconds>:<text>. The response carries the
+                            // whole output of THIS command: the socket thread waits for the game
+                            // thread to complete it (or the async handler to, later).
+                            double timeoutSeconds = DefaultTimeoutSeconds;
+                            string command;
+                            if (line.StartsWith("CMDT:"))
+                            {
+                                string rest = line.Substring(5);
+                                int colon = rest.IndexOf(':');
+                                if (colon <= 0 || !double.TryParse(rest.Substring(0, colon), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out timeoutSeconds))
+                                {
+                                    writer.WriteLine("OUTPUT:1");
+                                    writer.WriteLine("ERROR: code=bad_request message=expected CMDT:<seconds>:<command>");
+                                    writer.WriteLine("END_OUTPUT");
+                                    continue;
+                                }
+                                command = rest.Substring(colon + 1).Trim();
+                            }
+                            else
+                            {
+                                command = line.Substring(4).Trim();
+                            }
                             // Remove any invisible/control characters
                             command = new string(command.Where(c => !char.IsControl(c) && c >= 32).ToArray());
-                            _logger.LogInfo($"Queued CLI command: {command}");
-                            _pendingCommands.Enqueue(command);
+                            RequestBroker.Request request = _broker.Submit(command, timeoutSeconds);
+                            _logger.LogInfo($"Queued CLI command #{request.Id} (timeout {timeoutSeconds:F0}s): {command}");
 
-                            // Wait for output with timeout
-                            var timeout = DateTime.Now.AddSeconds(30);
-                            while (DateTime.Now < timeout && _outputBuffer.IsEmpty)
-                            {
-                                Thread.Sleep(50);
-                            }
+                            RequestBroker.Response response = _broker.Wait(request, Thread.Sleep);
+                            if (!response.Completed)
+                                _logger.LogWarning($"CLI command #{request.Id} timed out after {timeoutSeconds:F0}s: {command}");
 
-                            // Send accumulated output
-                            var outputLines = new List<string>();
-                            while (_outputBuffer.TryDequeue(out var output))
-                            {
-                                outputLines.Add(output);
-                            }
-
-                            if (outputLines.Count == 0)
-                            {
-                                outputLines.Add("ERROR: code=command_timeout message=Command timed out waiting for output.");
-                            }
-
-                            writer.WriteLine($"OUTPUT:{outputLines.Count}");
-                            foreach (var outputLine in outputLines)
+                            writer.WriteLine($"OUTPUT:{response.Lines.Count}");
+                            foreach (string outputLine in response.Lines)
                             {
                                 writer.WriteLine(outputLine);
                             }
@@ -304,14 +314,18 @@ namespace valheimCLI
             }
         }
 
-        public bool TryGetPendingCommand(out string? command)
+        public RequestBroker Broker => _broker;
+
+        /// <summary>Game thread: the next request to execute.</summary>
+        public bool TryGetPendingRequest(out RequestBroker.Request request)
         {
-            return _pendingCommands.TryDequeue(out command);
+            return _broker.TryDequeue(out request);
         }
 
+        /// <summary>Output for the request executing now.</summary>
         public void SendOutput(string output)
         {
-            _outputBuffer.Enqueue(output);
+            _broker.Output(output);
         }
 
         private List<string> GetAvailableCommands()
