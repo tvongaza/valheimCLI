@@ -5192,7 +5192,8 @@ namespace valheimCLI
 
             World world = new World(worldName, seed);
             world.m_fileSource = FileHelpers.FileSource.Local;
-            world.SaveWorldMetaData(DateTime.Now);
+            // Valheim 1.0 renamed this: the world's .fwl is "FWL data" now.
+            world.SaveWorldFWLData(DateTime.Now);
             SaveSystem.InvalidateCache();
 
             addOutput($"OK: WORLD_CREATED name={world.m_name} seedName={world.m_seedName} seed={world.m_seed} uid={world.m_uid} worldGenVersion={world.m_worldGenVersion}");
