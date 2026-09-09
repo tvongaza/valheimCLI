@@ -1427,7 +1427,7 @@ namespace valheimCLI
                 return;
             }
 
-            Dictionary<Vector2i, ZoneSystem.LocationInstance> locationInstances = zoneSystem.m_locationInstances;
+            Dictionary<Vector2s, ZoneSystem.LocationInstance> locationInstances = zoneSystem.m_locationInstances;
             if (locationInstances == null)
             {
                 addOutput("ERROR: Location instances not available");
@@ -1436,7 +1436,7 @@ namespace valheimCLI
 
             ZoneSystem.LocationInstance? nearest = null;
             float nearestDistance = float.MaxValue;
-            foreach (KeyValuePair<Vector2i, ZoneSystem.LocationInstance> kvp in locationInstances)
+            foreach (KeyValuePair<Vector2s, ZoneSystem.LocationInstance> kvp in locationInstances)
             {
                 ZoneSystem.LocationInstance locationInstance = kvp.Value;
                 if (locationInstance.m_location == null)
@@ -1480,7 +1480,7 @@ namespace valheimCLI
                 return;
             }
 
-            Dictionary<Vector2i, ZoneSystem.LocationInstance> locationInstances = zoneSystem.m_locationInstances;
+            Dictionary<Vector2s, ZoneSystem.LocationInstance> locationInstances = zoneSystem.m_locationInstances;
             if (locationInstances == null)
             {
                 addOutput("ERROR: Location instances not available");
@@ -1490,7 +1490,7 @@ namespace valheimCLI
             string normalizedQuery = query.Trim();
             Vector3 playerPosition = Player.m_localPlayer != null ? Player.m_localPlayer.transform.position : Vector3.zero;
             List<ZoneSystem.LocationInstance> matches = new();
-            foreach (KeyValuePair<Vector2i, ZoneSystem.LocationInstance> kvp in locationInstances)
+            foreach (KeyValuePair<Vector2s, ZoneSystem.LocationInstance> kvp in locationInstances)
             {
                 ZoneSystem.LocationInstance locationInstance = kvp.Value;
                 if (locationInstance.m_location == null)
@@ -1577,7 +1577,7 @@ namespace valheimCLI
                     return;
                 }
 
-                ItemDrop.ItemData? testItem = container.GetInventory().AddItem(itemPrefab, itemCount, 1, 0, 0L, "");
+                ItemDrop.ItemData? testItem = container.GetInventory().AddItem(itemPrefab, itemCount, 1, 0, 0L, "", cheated: true);
                 if (testItem == null)
                 {
                     addOutput($"ERROR: Failed to add test item prefab '{itemPrefab}' to manifest container");
@@ -1599,7 +1599,7 @@ namespace valheimCLI
                 string currencyPrefabName = GetMwlCurrencyPrefabName(context);
                 Inventory inventory = player.GetInventory();
                 int beforeGrantCurrency = inventory.CountItems(currencySharedName);
-                inventory.AddItem(currencyPrefabName, expectedCost + 100, 1, 0, 0L, "");
+                inventory.AddItem(currencyPrefabName, expectedCost + 100, 1, 0, 0L, "", cheated: true);
                 int beforeCurrency = inventory.CountItems(currencySharedName);
                 int beforeShipments = GetMwlShipmentCount(context);
 
@@ -2843,8 +2843,8 @@ namespace valheimCLI
                 return;
             }
 
-            Vector2i min = ZoneSystem.GetZone(new Vector3(x - radius, 0f, z - radius));
-            Vector2i max = ZoneSystem.GetZone(new Vector3(x + radius, 0f, z + radius));
+            Vector2s min = ZoneSystem.GetZone(new Vector3(x - radius, 0f, z - radius));
+            Vector2s max = ZoneSystem.GetZone(new Vector3(x + radius, 0f, z + radius));
             int zones = 0;
             int loaded = 0;
             for (int zx = min.x; zx <= max.x; zx++)
@@ -2852,7 +2852,7 @@ namespace valheimCLI
                 for (int zy = min.y; zy <= max.y; zy++)
                 {
                     zones++;
-                    if (ZoneSystem.instance.IsZoneLoaded(new Vector2i(zx, zy)))
+                    if (ZoneSystem.instance.IsZoneLoaded(new Vector2s(zx, zy)))
                     {
                         loaded++;
                     }
