@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -504,17 +505,61 @@ namespace valheimCLI
                 args.Context.AddString($"OK: screenshot queued path={path} size={Screen.width * supersize}x{Screen.height * supersize}");
             }, isCheat: true);
 
-            new Terminal.ConsoleCommand("cli_world_dump", "Sample the world generator to CSV for offline analysis: cli_world_dump [step=50] [dir]. Writes world.csv (x,z,height,biome,river) over the full map and locations.csv (name,x,z,radius)", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            new Terminal.ConsoleCommand("cli_world_dump", "Sample the world generator to CSV for offline analysis: cli_world_dump [step=50] [dir] [--window cx,cz,half]. Writes world.csv (x,z,height,biome,river,river_width,base_height) over the full map plus locations.csv (name,x,z,radius); with --window it writes one window file and no locations. Samples sit on the world lattice (-10000 + i*step), so step 8 lands on the pathfinding cells and step 128 on the island grid", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
             {
+                const string usage = "Usage: cli_world_dump [step=50] [dir] [--window cx,cz,half]";
                 int step = 50;
-                if (args.Length >= 2 && !int.TryParse(args[1], out step))
+                string? dir = null;
+                float? centerX = null, centerZ = null, half = null;
+                int positional = 0;
+
+                for (int i = 1; i < args.Length; i++)
                 {
-                    args.Context.AddString("Usage: cli_world_dump [step=50] [dir]");
+                    string arg = args[i];
+                    if (arg.Equals("--window", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (i + 1 >= args.Length)
+                        {
+                            args.Context.AddString(usage);
+                            return;
+                        }
+
+                        if (!WorldDumpGrid.TryParseWindow(args[++i], out float cx, out float cz, out float halfSize))
+                        {
+                            args.Context.AddString(usage);
+                            return;
+                        }
+
+                        centerX = cx;
+                        centerZ = cz;
+                        half = halfSize;
+                        continue;
+                    }
+
+                    if (positional == 0)
+                    {
+                        if (!int.TryParse(arg, out step))
+                        {
+                            args.Context.AddString(usage);
+                            return;
+                        }
+
+                        positional++;
+                        continue;
+                    }
+
+                    if (positional == 1)
+                    {
+                        dir = arg;
+                        positional++;
+                        continue;
+                    }
+
+                    args.Context.AddString(usage);
                     return;
                 }
 
-                string? dir = args.Length >= 3 ? args[2] : null;
-                WorldDump(Mathf.Clamp(step, 5, 1000), dir, args.Context.AddString);
+                WorldDump(Mathf.Clamp(step, 5, 1000), dir, args.Context.AddString, centerX, centerZ, half);
             }, isCheat: true);
 
             new Terminal.ConsoleCommand("cli_zone_ready", "Report whether every zone within a radius of a point is loaded, for scripts that poll after a teleport instead of sleeping: cli_zone_ready <x> <z> [radius=32]", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
@@ -2766,7 +2811,8 @@ namespace valheimCLI
             addOutput($"OK: freefly camera at {position.x:F1},{position.y:F1},{position.z:F1} yaw={yaw:F1} pitch={pitch:F1}");
         }
 
-        public static void WorldDump(int step, string? directory, Action<string> addOutput)
+        public static void WorldDump(int step, string? directory, Action<string> addOutput,
+            float? windowCenterX = null, float? windowCenterZ = null, float? windowHalf = null)
         {
             WorldGenerator world = WorldGenerator.instance;
             if (world == null)
@@ -2776,24 +2822,48 @@ namespace valheimCLI
             }
 
             const float halfExtent = 10000f;
+            bool windowed = windowCenterX.HasValue && windowCenterZ.HasValue && windowHalf.HasValue;
+            float x0 = windowed ? windowCenterX!.Value - windowHalf!.Value : -halfExtent;
+            float x1 = windowed ? windowCenterX!.Value + windowHalf!.Value : halfExtent;
+            float z0 = windowed ? windowCenterZ!.Value - windowHalf!.Value : -halfExtent;
+            float z1 = windowed ? windowCenterZ!.Value + windowHalf!.Value : halfExtent;
+
+            int ixFrom = Mathf.Max(WorldDumpGrid.From(x0, step), WorldDumpGrid.From(-halfExtent, step));
+            int ixTo = Mathf.Min(WorldDumpGrid.To(x1, step), WorldDumpGrid.To(halfExtent, step));
+            int izFrom = Mathf.Max(WorldDumpGrid.From(z0, step), WorldDumpGrid.From(-halfExtent, step));
+            int izTo = Mathf.Min(WorldDumpGrid.To(z1, step), WorldDumpGrid.To(halfExtent, step));
+
+            if (ixTo < ixFrom || izTo < izFrom)
+            {
+                addOutput("ERROR: WORLD_DUMP window holds no lattice sample at this step");
+                return;
+            }
+
             string dir = string.IsNullOrWhiteSpace(directory) ? BuildWorldDumpDirectory() : directory!;
             Directory.CreateDirectory(dir);
-            string worldPath = Path.Combine(dir, "world.csv");
+            CultureInfo invariant = CultureInfo.InvariantCulture;
+            string worldName = windowed
+                ? string.Format(invariant, "world.win_{0:F0}_{1:F0}_{2:F0}_s{3}.csv",
+                    windowCenterX!.Value, windowCenterZ!.Value, windowHalf!.Value, step)
+                : "world.csv";
+            string worldPath = Path.Combine(dir, worldName);
             string locationsPath = Path.Combine(dir, "locations.csv");
-            var invariant = System.Globalization.CultureInfo.InvariantCulture;
             Stopwatch stopwatch = Stopwatch.StartNew();
 
             int samples = 0;
             using (StreamWriter writer = new StreamWriter(worldPath, false, new System.Text.UTF8Encoding(false)))
             {
-                writer.WriteLine("x,z,height,biome,river");
-                for (float z = -halfExtent; z <= halfExtent; z += step)
+                writer.WriteLine("x,z,height,biome,river,river_width,base_height");
+                for (int iz = izFrom; iz <= izTo; iz++)
                 {
-                    for (float x = -halfExtent; x <= halfExtent; x += step)
+                    float z = WorldDumpGrid.At(iz, step);
+                    for (int ix = ixFrom; ix <= ixTo; ix++)
                     {
+                        float x = WorldDumpGrid.At(ix, step);
                         float height = world.GetHeight(x, z);
                         Heightmap.Biome biome = world.GetBiome(x, z);
-                        world.GetRiverWeight(x, z, out float river, out _);
+                        world.GetRiverWeight(x, z, out float river, out float riverWidth);
+                        float baseHeight = world.GetBaseHeight(x, z, menuTerrain: false);
                         writer.Write(x.ToString("F0", invariant));
                         writer.Write(',');
                         writer.Write(z.ToString("F0", invariant));
@@ -2802,10 +2872,22 @@ namespace valheimCLI
                         writer.Write(',');
                         writer.Write(biome.ToString());
                         writer.Write(',');
-                        writer.WriteLine(river.ToString("F2", invariant));
+                        writer.Write(river.ToString("F2", invariant));
+                        writer.Write(',');
+                        writer.Write(riverWidth.ToString("F1", invariant));
+                        writer.Write(',');
+                        writer.WriteLine(baseHeight.ToString("F5", invariant));
                         samples++;
                     }
                 }
+            }
+
+            if (windowed)
+            {
+                addOutput($"OK: WORLD_DUMP samples={samples} step={step} window={windowCenterX!.Value:F0},{windowCenterZ!.Value:F0},{windowHalf!.Value:F0} " +
+                          $"extent={WorldDumpGrid.At(ixFrom, step):F0},{WorldDumpGrid.At(izFrom, step):F0}..{WorldDumpGrid.At(ixTo, step):F0},{WorldDumpGrid.At(izTo, step):F0} " +
+                          $"ms={stopwatch.ElapsedMilliseconds} world={worldPath}");
+                return;
             }
 
             int locations = 0;
