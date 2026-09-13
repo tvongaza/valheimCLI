@@ -27,6 +27,7 @@ namespace valheimCLI
         private ConfigEntry<int>? _portConfig;
         private ConfigEntry<bool>? _enabledConfig;
         private ConfigEntry<bool>? _autoStartQueuedJoinConfig;
+        private ConfigEntry<bool>? _allowOnServerClientsConfig;
 
         private readonly List<string> _capturedOutput = new();
         private bool _capturingOutput;
@@ -43,6 +44,8 @@ namespace valheimCLI
             _enabledConfig = Config.Bind("Server", "Enabled", true, "Enable the command server");
             _portConfig = Config.Bind("Server", "Port", 5555, "Port for the command server (localhost only)");
             _autoStartQueuedJoinConfig = Config.Bind("ClientLaunch", "AutoStartQueuedJoin", true, "Automatically start the selected character when Valheim has a queued startup/server join.");
+            _allowOnServerClientsConfig = Config.Bind("Server", "AllowOnServerClients", false, "Let valheimCLI's own cli_ commands run while this client is joined to a dedicated server. Valheim 1.0 refuses every cheat command on such a client, admin or not. For test stations: the server cannot see or stop it.");
+            ServerCommands.AllowCliOnServerClients = _allowOnServerClientsConfig.Value;
             if (HasStartupJoinArgument())
             {
                 RequestAutoStartQueuedJoin();
@@ -52,6 +55,7 @@ namespace valheimCLI
             HarmonyInstance.PatchAll(assembly);
 
             CustomCommands.Register();
+            ServerCommands.Register();
 
             // Initialize state tracker
             _stateTracker = new GameStateTracker(Log);
