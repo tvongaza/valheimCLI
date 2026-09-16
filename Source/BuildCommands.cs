@@ -53,6 +53,17 @@ namespace valheimCLI
                 SetNoCost(enabled, args.Context.AddString);
             });
 
+            _ = new Terminal.ConsoleCommand("cli_build_rotate", "Set the placement ghost's rotation step, as the scroll wheel does: cli_build_rotate <step> (yaw = step * 22.5 degrees)", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            {
+                if (args.Length != 2 || !int.TryParse(args[1], out int step))
+                {
+                    args.Context.AddString("Usage: cli_build_rotate <step>");
+                    return;
+                }
+
+                SetRotation(step, args.Context.AddString);
+            }, isCheat: true);
+
             _ = new Terminal.ConsoleCommand("cli_build_select", "Select a hammer build piece: cli_build_select <prefab-or-name> [nocost]", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
             {
                 if (args.Length < 2)
@@ -134,6 +145,24 @@ namespace valheimCLI
 
             sb.Append($"OK: listed={matches.Count} filter='{filter}' totalTablePieces={buildPieces.m_pieces.Count} noCost={player.NoCostCheat()}");
             EmitLines(sb, addOutput);
+        }
+
+        private static void SetRotation(int step, Action<string> addOutput)
+        {
+            Player player = Player.m_localPlayer;
+            if (player == null)
+            {
+                addOutput("ERROR: No local player found");
+                return;
+            }
+
+            // The same integer the scroll wheel increments; vanilla turns it into
+            // Quaternion.Euler(0, m_placeRotationDegrees * m_placeRotation, 0).
+            player.m_placeRotation = step;
+            UpdatePlacementGhost(player, false);
+            GameObject? ghost = GetPlacementGhost(player);
+            float yaw = player.m_placeRotationDegrees * step;
+            addOutput($"OK: placeRotation={step} yaw={yaw.ToString("F1", CultureInfo.InvariantCulture)} ghost={GhostSummary(ghost)}");
         }
 
         private static void SelectPiece(string requestedPiece, bool noCost, Action<string> addOutput)

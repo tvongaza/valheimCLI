@@ -36,17 +36,17 @@ public static class CommandMetadata
             return "plugin-server";
         }
 
-        if (name is "cli_peers" or "cli_zdos_at" or "cli_containers_at")
+        if (name is "cli_peers" or "cli_zdos_at" or "cli_containers_at" or "cli_teleport_peer")
         {
             return "server-world";
         }
 
-        if (name is "cli_ground_height" or "cli_surface_at" or "cli_paint_at" or "cli_piece_geometry" or "cli_prefabs_at")
+        if (name is "cli_ground_height" or "cli_surface_at" or "cli_paint_at" or "cli_piece_geometry" or "cli_prefabs_at" or "cli_terrain_ops" or "cli_terrain_edit" or "cli_spawn_piece" or "cli_clutter")
         {
             return "loaded-world";
         }
 
-        if (name is "cli_nearby_prefabs")
+        if (name is "cli_nearby_prefabs" or "cli_cart" or "cli_build_rotate")
         {
             return "local-player";
         }

@@ -27,6 +27,7 @@ namespace valheimCLI
         private ConfigEntry<int>? _portConfig;
         private ConfigEntry<bool>? _enabledConfig;
         private ConfigEntry<bool>? _autoStartQueuedJoinConfig;
+        private ConfigEntry<bool>? _allowOnServerClientsConfig;
 
         private readonly List<string> _capturedOutput = new();
         private bool _capturingOutput;
@@ -43,6 +44,8 @@ namespace valheimCLI
             _enabledConfig = Config.Bind("Server", "Enabled", true, "Enable the command server");
             _portConfig = Config.Bind("Server", "Port", 5555, "Port for the command server (localhost only)");
             _autoStartQueuedJoinConfig = Config.Bind("ClientLaunch", "AutoStartQueuedJoin", true, "Automatically start the selected character when Valheim has a queued startup/server join.");
+            _allowOnServerClientsConfig = Config.Bind("Server", "AllowOnServerClients", false, "Let valheimCLI's own cli_ commands run while this client is joined to a dedicated server. Valheim 1.0 refuses every cheat command on such a client, admin or not. For test stations: the server cannot see or stop it.");
+            ClientCommandAccess.AllowOnServerClients = _allowOnServerClientsConfig.Value;
             if (HasStartupJoinArgument())
             {
                 RequestAutoStartQueuedJoin();
@@ -51,9 +54,23 @@ namespace valheimCLI
             Assembly assembly = Assembly.GetExecutingAssembly();
             HarmonyInstance.PatchAll(assembly);
 
+            // Which commands are ours is the difference our registration makes
+            // to Terminal.commands -- the "cli_" prefix is not proof of
+            // ownership, and AllowOnServerClients must not rescue another
+            // plugin's command (see CliCommandValidity). Keep the OBJECTS, not
+            // the names: the vanilla constructor does commands[name] = this, so
+            // a name can be taken over by a plugin loading after us, and a name
+            // someone else registered first is still ours once we replace it.
+            Dictionary<string, object> beforeRegister = SnapshotCommands();
             CustomCommands.Register();
             WorldInspectionCommands.Register();
             TerrainInspectionCommands.Register();
+            SessionControlCommands.Register();
+            TerrainActionCommands.Register();
+            CaptureCommands.Register();
+            List<object> registeredHere = CliCommandValidity.NewlyRegistered(beforeRegister, SnapshotCommands());
+            CliCommandValidity.RecordOwnCommands(registeredHere);
+            Log.LogInfo($"Registered {registeredHere.Count} valheimCLI commands");
 
             // Initialize state tracker
             _stateTracker = new GameStateTracker(Log);
@@ -67,6 +84,17 @@ namespace valheimCLI
 
             SetupWatcher();
             Log.LogInfo($"{ModName} loaded. CLI server on port {_portConfig.Value}");
+        }
+
+        /// <summary>Terminal.commands as it stands now: each name against the object behind it.</summary>
+        private static Dictionary<string, object> SnapshotCommands()
+        {
+            Dictionary<string, object> snapshot = new Dictionary<string, object>();
+            foreach (KeyValuePair<string, Terminal.ConsoleCommand> entry in Terminal.commands)
+            {
+                snapshot[entry.Key] = entry.Value;
+            }
+            return snapshot;
         }
 
         private void Update()
