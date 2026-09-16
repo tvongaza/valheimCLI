@@ -37,7 +37,7 @@ sessions use vanilla cheat-command access.
 | `cli_cart status [radius]` | Observe the nearest loaded cart and its attachment/inventory |
 | `cli_cart attach\|detach [radius]` | Request vanilla interaction; check status again to confirm |
 | `cli_cart load <prefab> <count> [radius]` | Add 1–10000 items to an owned cart, using multiple stacks when needed |
-| `cli_clutter off\|on` | Clear and disable/re-enable decorative ground clutter; does not remove world vegetation |
+| `cli_clutter off\|on` | Disable decorative ground clutter, then restore each entry's previous state; does not remove world vegetation |
 
 Terrain edit, hammer rotation, prefab spawn, cart and clutter commands are
 cheat-marked. Prefab spawning is an explicit test action: it bypasses hammer
