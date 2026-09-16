@@ -218,7 +218,7 @@ namespace valheimCLI
                         // most worth seeing.
                         GameObject? prefab = ZNetScene.instance != null
                             ? ZNetScene.instance.GetPrefab(zdo.GetPrefab()) : null;
-                        if (prefab == null || prefab.GetComponent<Container>() == null)
+                        if (!ContainerLookup.HoldsAContainer(prefab))
                             continue;
                         byte[] items = zdo.GetByteArray(ZDOVars.s_items);
                         bool rolled = zdo.GetBool(ZDOVars.s_addedDefaultItems);
