@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -504,17 +505,66 @@ namespace valheimCLI
                 args.Context.AddString($"OK: screenshot queued path={path} size={Screen.width * supersize}x{Screen.height * supersize}");
             }, isCheat: true);
 
-            new Terminal.ConsoleCommand("cli_world_dump", "Sample the world generator to CSV for offline analysis: cli_world_dump [step=50] [dir]. Writes world.csv (x,z,height,biome,river) over the full map and locations.csv (name,x,z,radius)", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            new Terminal.ConsoleCommand("cli_world_dump", "Sample the world generator to CSV for offline analysis: cli_world_dump [step=50] [dir] [--window cx,cz,half]. Writes world.csv (x,z,height,biome,river,river_width,base_height) over the full map plus locations.csv (name,x,z,radius); with --window it writes one window file and no locations. Samples sit on the world lattice (-10000 + i*step), so step 8 lands on the pathfinding cells and step 128 on the island grid", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
             {
+                const string usage = "Usage: cli_world_dump [step=50] [dir] [--window cx,cz,half]";
                 int step = 50;
-                if (args.Length >= 2 && !int.TryParse(args[1], out step))
+                string? dir = null;
+                float? centerX = null, centerZ = null, half = null;
+                int positional = 0;
+
+                for (int i = 1; i < args.Length; i++)
                 {
-                    args.Context.AddString("Usage: cli_world_dump [step=50] [dir]");
+                    string arg = args[i];
+                    if (arg.Equals("--window", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (i + 1 >= args.Length || centerX.HasValue)
+                        {
+                            args.Context.AddString(usage);
+                            return;
+                        }
+
+                        if (!WorldDumpGrid.TryParseWindow(args[++i], out float cx, out float cz, out float halfSize))
+                        {
+                            args.Context.AddString(usage);
+                            return;
+                        }
+
+                        centerX = cx;
+                        centerZ = cz;
+                        half = halfSize;
+                        continue;
+                    }
+
+                    if (positional == 0)
+                    {
+                        if (!int.TryParse(arg, out step))
+                        {
+                            args.Context.AddString(usage);
+                            return;
+                        }
+
+                        positional++;
+                        continue;
+                    }
+
+                    if (positional == 1)
+                    {
+                        dir = arg;
+                        positional++;
+                        continue;
+                    }
+
+                    args.Context.AddString(usage);
                     return;
                 }
 
-                string? dir = args.Length >= 3 ? args[2] : null;
-                WorldDump(Mathf.Clamp(step, 5, 1000), dir, args.Context.AddString);
+                if (step < 5 || step > 1000)
+                {
+                    args.Context.AddString("ERROR: step must be between 5 and 1000 metres");
+                    return;
+                }
+                WorldDump(step, dir, args.Context.AddString, centerX, centerZ, half);
             }, isCheat: true);
 
             new Terminal.ConsoleCommand("cli_zone_ready", "Report whether every zone within a radius of a point is loaded, for scripts that poll after a teleport instead of sleeping: cli_zone_ready <x> <z> [radius=32]", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
@@ -1129,6 +1179,31 @@ namespace valheimCLI
             new Terminal.ConsoleCommand("cli_connection_status", "Print the current Valheim network connection status", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
             {
                 PrintConnectionStatus(args.Context.AddString);
+            });
+
+            new Terminal.ConsoleCommand("cli_create_world", "Create a local world with a KNOWN seed, so a terrain report can be reproduced: cli_create_world <worldName> <seed> [--overwrite]. Writes the world metadata and stops; start it with cli_start_local_world. Runs at the main menu, like the other world commands, so it is not cheat-gated", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            {
+                if (args.Length < 3)
+                {
+                    args.Context.AddString("Usage: cli_create_world <worldName> <seed> [--overwrite]");
+                    return;
+                }
+
+                bool overwrite = false;
+                for (int i = 3; i < args.Length; i++)
+                {
+                    if (args[i].Equals("--overwrite", StringComparison.OrdinalIgnoreCase) && !overwrite)
+                    {
+                        overwrite = true;
+                    }
+                    else
+                    {
+                        args.Context.AddString("Usage: cli_create_world <worldName> <seed> [--overwrite]");
+                        return;
+                    }
+                }
+
+                CreateWorldWithSeed(args[1], args[2], overwrite, args.Context.AddString);
             });
 
             new Terminal.ConsoleCommand("cli_start_local_world", "Create/select and start a local world: cli_start_local_world <worldName>", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
@@ -2766,7 +2841,8 @@ namespace valheimCLI
             addOutput($"OK: freefly camera at {position.x:F1},{position.y:F1},{position.z:F1} yaw={yaw:F1} pitch={pitch:F1}");
         }
 
-        public static void WorldDump(int step, string? directory, Action<string> addOutput)
+        public static void WorldDump(int step, string? directory, Action<string> addOutput,
+            float? windowCenterX = null, float? windowCenterZ = null, float? windowHalf = null)
         {
             WorldGenerator world = WorldGenerator.instance;
             if (world == null)
@@ -2775,25 +2851,66 @@ namespace valheimCLI
                 return;
             }
 
+            if (step < 5 || step > 1000)
+            {
+                addOutput("ERROR: step must be between 5 and 1000 metres");
+                return;
+            }
             const float halfExtent = 10000f;
+            bool windowed = windowCenterX.HasValue && windowCenterZ.HasValue && windowHalf.HasValue;
+            bool anyWindow = windowCenterX.HasValue || windowCenterZ.HasValue || windowHalf.HasValue;
+            string windowSpec = string.Format(CultureInfo.InvariantCulture, "{0},{1},{2}", windowCenterX, windowCenterZ, windowHalf);
+            if (anyWindow && (!windowed || !WorldDumpGrid.TryParseWindow(windowSpec, out _, out _, out _)))
+            {
+                addOutput("ERROR: invalid world dump window");
+                return;
+            }
+            float x0 = windowed ? windowCenterX!.Value - windowHalf!.Value : -halfExtent;
+            float x1 = windowed ? windowCenterX!.Value + windowHalf!.Value : halfExtent;
+            float z0 = windowed ? windowCenterZ!.Value - windowHalf!.Value : -halfExtent;
+            float z1 = windowed ? windowCenterZ!.Value + windowHalf!.Value : halfExtent;
+
+            int ixFrom = Mathf.Max(WorldDumpGrid.From(x0, step), WorldDumpGrid.From(-halfExtent, step));
+            int ixTo = Mathf.Min(WorldDumpGrid.To(x1, step), WorldDumpGrid.To(halfExtent, step));
+            int izFrom = Mathf.Max(WorldDumpGrid.From(z0, step), WorldDumpGrid.From(-halfExtent, step));
+            int izTo = Mathf.Min(WorldDumpGrid.To(z1, step), WorldDumpGrid.To(halfExtent, step));
+
+            if (ixTo < ixFrom || izTo < izFrom)
+            {
+                addOutput("ERROR: WORLD_DUMP window holds no lattice sample at this step");
+                return;
+            }
+
+            if (!WorldDumpGrid.TrySampleCount(ixFrom, ixTo, izFrom, izTo, step, out long expectedSamples))
+            {
+                addOutput("ERROR: WORLD_DUMP exceeds 1000000 samples; use --window or a larger step");
+                return;
+            }
             string dir = string.IsNullOrWhiteSpace(directory) ? BuildWorldDumpDirectory() : directory!;
             Directory.CreateDirectory(dir);
-            string worldPath = Path.Combine(dir, "world.csv");
+            CultureInfo invariant = CultureInfo.InvariantCulture;
+            string worldName = windowed
+                ? string.Format(invariant, "world.win_{0:R}_{1:R}_{2:R}_s{3}.csv",
+                    windowCenterX!.Value, windowCenterZ!.Value, windowHalf!.Value, step)
+                : "world.csv";
+            string worldPath = Path.Combine(dir, worldName);
             string locationsPath = Path.Combine(dir, "locations.csv");
-            var invariant = System.Globalization.CultureInfo.InvariantCulture;
             Stopwatch stopwatch = Stopwatch.StartNew();
 
             int samples = 0;
             using (StreamWriter writer = new StreamWriter(worldPath, false, new System.Text.UTF8Encoding(false)))
             {
-                writer.WriteLine("x,z,height,biome,river");
-                for (float z = -halfExtent; z <= halfExtent; z += step)
+                writer.WriteLine("x,z,height,biome,river,river_width,base_height");
+                for (int iz = izFrom; iz <= izTo; iz++)
                 {
-                    for (float x = -halfExtent; x <= halfExtent; x += step)
+                    float z = WorldDumpGrid.At(iz, step);
+                    for (int ix = ixFrom; ix <= ixTo; ix++)
                     {
+                        float x = WorldDumpGrid.At(ix, step);
                         float height = world.GetHeight(x, z);
                         Heightmap.Biome biome = world.GetBiome(x, z);
-                        world.GetRiverWeight(x, z, out float river, out _);
+                        world.GetRiverWeight(x, z, out float river, out float riverWidth);
+                        float baseHeight = world.GetBaseHeight(x, z, menuTerrain: false);
                         writer.Write(x.ToString("F0", invariant));
                         writer.Write(',');
                         writer.Write(z.ToString("F0", invariant));
@@ -2802,10 +2919,25 @@ namespace valheimCLI
                         writer.Write(',');
                         writer.Write(biome.ToString());
                         writer.Write(',');
-                        writer.WriteLine(river.ToString("F2", invariant));
+                        writer.Write(river.ToString("F2", invariant));
+                        writer.Write(',');
+                        writer.Write(riverWidth.ToString("F1", invariant));
+                        writer.Write(',');
+                        writer.WriteLine(baseHeight.ToString("F5", invariant));
                         samples++;
                     }
                 }
+            }
+
+            if (samples != expectedSamples)
+            {
+                addOutput($"ERROR: WORLD_DUMP incomplete: expected={expectedSamples} actual={samples}");
+                return;
+            }
+            if (windowed)
+            {
+                addOutput(FormattableString.Invariant($"OK: WORLD_DUMP samples={samples} step={step} window={windowCenterX!.Value:F0},{windowCenterZ!.Value:F0},{windowHalf!.Value:F0} extent={WorldDumpGrid.At(ixFrom, step):F0},{WorldDumpGrid.At(izFrom, step):F0}..{WorldDumpGrid.At(ixTo, step):F0},{WorldDumpGrid.At(izTo, step):F0} ms={stopwatch.ElapsedMilliseconds} world={worldPath}"));
+                return;
             }
 
             int locations = 0;
@@ -5052,6 +5184,62 @@ namespace valheimCLI
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// A world with a seed the caller chose. The game's own dialog is the
+        /// only other way to set one, so a seed named in a bug report cannot
+        /// otherwise be reproduced from a script.
+        /// </summary>
+        public static void CreateWorldWithSeed(string worldName, string seed, bool overwrite, Action<string> addOutput)
+        {
+            bool atMenu = FejdStartup.instance != null && ZNet.instance == null;
+            if (!WorldFixturePolicy.CanCreate(atMenu, false, false, true, out string contextError))
+            {
+                addOutput("ERROR: " + contextError);
+                return;
+            }
+            if (!ValidateWorldName(worldName, out string validationError))
+            {
+                addOutput(validationError);
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(seed))
+            {
+                addOutput("ERROR: Seed must not be empty");
+                return;
+            }
+
+            List<World> existing = SaveSystem.GetWorldList();
+            World? already = existing.Find(candidate => string.Equals(candidate.m_name, worldName, StringComparison.OrdinalIgnoreCase));
+            if (!WorldFixturePolicy.CanCreate(true, already != null, overwrite,
+                    already == null || already.m_fileSource == FileHelpers.FileSource.Local, out string refusal))
+            {
+                addOutput("ERROR: " + refusal);
+                return;
+            }
+
+            if (already != null)
+            {
+                World.RemoveWorld(already.m_name, already.m_fileSource);
+                SaveSystem.InvalidateCache();
+            }
+
+            World world = new World(worldName, seed);
+            world.m_fileSource = FileHelpers.FileSource.Local;
+            // Valheim 1.0 renamed this: the world's .fwl is "FWL data" now.
+            world.SaveWorldFWLData(DateTime.Now);
+            SaveSystem.InvalidateCache();
+
+            World? saved = SaveSystem.GetWorldList().Find(candidate => candidate.m_name == worldName
+                && candidate.m_fileSource == FileHelpers.FileSource.Local);
+            if (saved == null || saved.m_seedName != seed || saved.m_uid != world.m_uid)
+            {
+                addOutput("ERROR: saved world metadata did not verify; inspect the game log");
+                return;
+            }
+            addOutput($"OK: WORLD_CREATED name={world.m_name} seedName={world.m_seedName} seed={world.m_seed} uid={world.m_uid} worldGenVersion={world.m_worldGenVersion}");
         }
 
         private static bool ValidateWorldName(string worldName, out string error)

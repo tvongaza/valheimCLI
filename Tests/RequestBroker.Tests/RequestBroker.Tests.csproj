@@ -11,6 +11,8 @@
   <ItemGroup>
     <Compile Include="../../Source/RequestBroker.cs" Link="Source/RequestBroker.cs" />
     <Compile Include="../../Source/OperationGate.cs" Link="Source/OperationGate.cs" />
+    <Compile Include="../../Source/WorldFixturePolicy.cs" Link="Source/WorldFixturePolicy.cs" />
+    <Compile Include="../../Source/WorldDumpGrid.cs" Link="Source/WorldDumpGrid.cs" />
   </ItemGroup>
 
   <ItemGroup>

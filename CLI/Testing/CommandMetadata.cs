@@ -26,7 +26,7 @@ public static class CommandMetadata
     public static string GetPrecondition(CommandInfo command)
     {
         string name = command.Name.ToLowerInvariant();
-        if (name is "cli_create_character" or "cli_select_character" or "cli_connect_direct")
+        if (name is "cli_create_character" or "cli_select_character" or "cli_connect_direct" or "cli_create_world")
         {
             return "main-menu";
         }
@@ -34,6 +34,11 @@ public static class CommandMetadata
         if (name is "cli_connection_status")
         {
             return "plugin-server";
+        }
+
+        if (name == "cli_world_dump")
+        {
+            return "loaded-world";
         }
 
         if (name.StartsWith("ct_"))
