@@ -11,8 +11,8 @@ namespace valheimCLI.Tests
 ///
 /// The case that matters is a container hung on a CHILD of the prefab rather
 /// than on its root. The vanilla Cart is one: a root-only lookup reported no
-/// container at a cart holding 123 stone, on the station, before and after a
-/// save. A pure test cannot hold the real prefab, so it holds the shape.
+/// container at a cart holding 123 stone in a dedicated server, before and
+/// after a save. A pure test cannot hold the real prefab, so it holds the shape.
 /// </summary>
 public class ContainerLookupTests
 {
