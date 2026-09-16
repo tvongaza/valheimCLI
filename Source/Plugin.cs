@@ -52,6 +52,8 @@ namespace valheimCLI
             HarmonyInstance.PatchAll(assembly);
 
             CustomCommands.Register();
+            WorldInspectionCommands.Register();
+            TerrainInspectionCommands.Register();
 
             // Initialize state tracker
             _stateTracker = new GameStateTracker(Log);

@@ -419,10 +419,3 @@ public class ValheimClient : IDisposable
         Disconnect();
     }
 }
-
-public record CommandInfo
-{
-    public string Name { get; init; } = "";
-    public string Description { get; init; } = "";
-    public bool IsCheat { get; init; }
-}

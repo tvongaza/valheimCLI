@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Globalization;
 using System.Linq;
 using System.Reflection;
 using UnityEngine;
@@ -271,23 +272,27 @@ namespace valheimCLI
                 SpawnFrozenNear(args[1], count, level, distance, spacing, args.Context.AddString);
             }, isCheat: true);
 
-            new Terminal.ConsoleCommand("cli_nearby_prefabs", "List prefab objects within a radius of the local player: cli_nearby_prefabs [radius]", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            new Terminal.ConsoleCommand("cli_nearby_prefabs", "List prefab objects within a radius of the local player, with each one's ZDO id and owner: cli_nearby_prefabs [radius]", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
             {
                 float radius = 2f;
                 if (args.Length >= 2)
                 {
-                    float.TryParse(args[1], out radius);
+                    if (!CommandArguments.TryRadius(args[1], out radius))
+                    {
+                        args.Context.AddString("ERROR: radius must be finite, greater than zero and at most 1024");
+                        return;
+                    }
                 }
 
                 ListNearbyPrefabs(radius, args.Context.AddString);
             }, isCheat: true);
 
-            new Terminal.ConsoleCommand("cli_prefabs_at", "List prefab objects near a world coordinate, independent of where the player stands: cli_prefabs_at <x> <y> <z> [radius=30]", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            new Terminal.ConsoleCommand("cli_prefabs_at", "List prefab objects near a world coordinate, independent of where the player stands, with each one's ZDO id and owner: cli_prefabs_at <x> <y> <z> [radius=30]", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
             {
                 if (args.Length < 4 ||
-                    !float.TryParse(args[1], out float atX) ||
-                    !float.TryParse(args[2], out float atY) ||
-                    !float.TryParse(args[3], out float atZ))
+                    !CommandArguments.TryFiniteFloat(args[1], out float atX) ||
+                    !CommandArguments.TryFiniteFloat(args[2], out float atY) ||
+                    !CommandArguments.TryFiniteFloat(args[3], out float atZ))
                 {
                     args.Context.AddString("Usage: cli_prefabs_at <x> <y> <z> [radius=30]");
                     return;
@@ -296,7 +301,11 @@ namespace valheimCLI
                 float atRadius = 30f;
                 if (args.Length >= 5)
                 {
-                    float.TryParse(args[4], out atRadius);
+                    if (!CommandArguments.TryRadius(args[4], out atRadius))
+                    {
+                        args.Context.AddString("ERROR: radius must be finite, greater than zero and at most 1024");
+                        return;
+                    }
                 }
 
                 ListPrefabsAt(new Vector3(atX, atY, atZ), Mathf.Clamp(atRadius, 0.5f, 60f), args.Context.AddString);
@@ -2526,6 +2535,7 @@ namespace valheimCLI
         {
             Collider[] colliders = Physics.OverlapSphere(playerPos, radius);
             Dictionary<GameObject, float> found = new();
+            Dictionary<GameObject, ZNetView> views = new();
             foreach (Collider collider in colliders)
             {
                 if (collider.GetComponentInParent<Player>() != null)
@@ -2540,18 +2550,68 @@ namespace valheimCLI
                 {
                     found[root] = distance;
                 }
+
+                if (nview != null && !views.ContainsKey(root))
+                {
+                    views[root] = nview;
+                }
             }
 
             foreach (KeyValuePair<GameObject, float> entry in found.OrderBy(item => item.Value))
             {
                 Vector3 pos = entry.Key.transform.position;
-                addOutput($"PREFAB name={CleanPrefabName(entry.Key.name)} distance={entry.Value:F1} pos={pos.x:F1},{pos.y:F1},{pos.z:F1}");
+                // Positions to the millimetre, not the decimetre. At F1 the
+                // rounding error is 5 cm per axis, which on a crossing at 45
+                // degrees projects to 7 cm along it -- enough to make pieces on
+                // an exact 2 m grid look 6 cm off it. The census is used to
+                // check geometry, so it has to be finer than what it measures.
+                // Rotation as well as position: a piece can be exactly where
+                // it belongs and still be one no player could place, because
+                // the vanilla hammer builds every ghost at Euler(0, yaw, 0)
+                // with yaw a multiple of Player.m_placeRotationDegrees. Euler
+                // angles come back in [0,360); pitch and roll are reported
+                // signed about zero, which is how "level" reads.
+                Vector3 euler = entry.Key.transform.rotation.eulerAngles;
+                float pitch = Mathf.DeltaAngle(0f, euler.x);
+                float roll = Mathf.DeltaAngle(0f, euler.z);
+                addOutput(FormattableString.Invariant($"PREFAB name={CleanPrefabName(entry.Key.name)} distance={entry.Value:F2} pos={pos.x:F3},{pos.y:F3},{pos.z:F3} rot={pitch:F3},{euler.y:F3},{roll:F3} {DescribeNetIdentity(entry.Key, views)}"));
             }
 
-            addOutput($"OK: NEARBY_PREFABS radius={radius:F1} count={found.Count}");
+            addOutput(FormattableString.Invariant($"OK: NEARBY_PREFABS radius={radius:F1} count={found.Count}"));
         }
 
-        private static string CleanPrefabName(string name)
+        /// <summary>
+        /// The networked identity of a listed object, so two clients can be
+        /// compared by WHICH pieces they see rather than by how many.
+        ///
+        /// zdo is ZDOID.ToString() = "userID:id". The userID half is the
+        /// SESSION id of whoever created the object, so a ZDOID is only
+        /// comparable within one server session: after a server restart the
+        /// same piece comes back under a different id and must be matched on
+        /// name+position instead. owner is the peer currently simulating it,
+        /// and 0 means nobody claims it.
+        ///
+        /// An object with no ZNetView is purely local (client-side scenery),
+        /// which is itself worth seeing in a two-client comparison, so it is
+        /// reported as zdo=local rather than dropped.
+        /// </summary>
+        private static string DescribeNetIdentity(GameObject root, Dictionary<GameObject, ZNetView> views)
+        {
+            if (!views.TryGetValue(root, out ZNetView nview) || nview == null)
+            {
+                return "zdo=local owner=none";
+            }
+
+            if (!nview.IsValid())
+            {
+                return "zdo=invalid owner=none";
+            }
+
+            ZDO zdo = nview.GetZDO();
+            return $"zdo={zdo.m_uid} owner={zdo.GetOwner()}";
+        }
+
+        internal static string CleanPrefabName(string name)
         {
             int cloneIndex = name.IndexOf("(Clone)", StringComparison.Ordinal);
             return cloneIndex >= 0 ? name.Substring(0, cloneIndex) : name;
