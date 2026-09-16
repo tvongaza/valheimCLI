@@ -21,7 +21,7 @@ namespace valheimCLI
         /// prefab asset is not an active scene object, so inactive children
         /// count too.
         /// </summary>
-        public static bool HoldsAContainer(GameObject prefab) =>
+        public static bool HoldsAContainer(GameObject? prefab) =>
             prefab != null && prefab.GetComponentInChildren<Container>(true) != null;
     }
 }
