@@ -260,6 +260,32 @@ namespace valheimCLI.Tests
             Assert.Null(SnapGeometry.HammerStep(yaw));
         }
 
+        /// <summary>
+        /// The in-game failure: a floor placed 1.1 m below the ground, or in
+        /// mid-air, touches nothing that supports it (terrain counts only where
+        /// the piece crosses its surface), reads support 0 against a minimum of
+        /// 10, and the game breaks it at its next wear update. It used to be
+        /// reported as placed; it is now refused.
+        /// </summary>
+        [Fact]
+        public void APieceTheGameWillBreakIsRefused()
+        {
+            Assert.Equal("unsupported", PlacementRules.SupportRefusal(true, 0f, 10f, canBeRemoved: true, noBuildingFall: false));
+            Assert.Equal("unsupported", PlacementRules.SupportRefusal(true, 9.99f, 10f, true, false));
+        }
+
+        [Fact]
+        public void APieceTheGameKeepsIsPlaced()
+        {
+            Assert.Null(PlacementRules.SupportRefusal(true, 100f, 10f, true, false));
+            Assert.Null(PlacementRules.SupportRefusal(true, 10f, 10f, true, false));
+            // Pieces that do not wear from lack of support, may not be removed,
+            // or stand in a world that turns building collapse off, stay.
+            Assert.Null(PlacementRules.SupportRefusal(false, 0f, 10f, true, false));
+            Assert.Null(PlacementRules.SupportRefusal(true, 0f, 10f, canBeRemoved: false, noBuildingFall: false));
+            Assert.Null(PlacementRules.SupportRefusal(true, 0f, 10f, true, noBuildingFall: true));
+        }
+
         [Fact]
         public void TheFirstFailingRuleIsReported()
         {

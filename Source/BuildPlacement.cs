@@ -338,5 +338,18 @@ namespace valheimCLI
             }
             return null;
         }
+
+        /// <summary>
+        /// Whether the game will break a just-placed piece for lack of support,
+        /// as an error code, or null. WearNTear.UpdateWear applies 100% damage
+        /// when a piece that wears from lack of support (m_noSupportWear) has
+        /// less than its minimum support, unless the piece may not be removed
+        /// or the world's NoBuildingFall key is set.
+        /// </summary>
+        public static string? SupportRefusal(bool wearsWithoutSupport, float support, float minimumSupport, bool canBeRemoved, bool noBuildingFall)
+        {
+            bool breaks = wearsWithoutSupport && support < minimumSupport && canBeRemoved && !noBuildingFall;
+            return breaks ? "unsupported" : null;
+        }
     }
 }

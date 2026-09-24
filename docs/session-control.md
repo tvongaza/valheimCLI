@@ -97,16 +97,32 @@ Before placing, the command refuses with `ERROR: code=<reason>`:
 | `wrong_biome` | The piece is restricted to other biomes |
 | `missing_requirements` | Not in no-cost mode and the player lacks the resources or a crafting station |
 
+After the placement call the new piece's support is computed with the game's
+own `WearNTear.UpdateSupport`. The game breaks a piece below its minimum
+support at its next wear update (`WearNTear.UpdateWear` applies 100% damage),
+which for a placed piece is within about a second. That is what happens to a
+piece buried in the ground or left in mid-air with nothing under it: terrain
+counts as support only where the piece's bounds cross its surface. Such a
+piece is removed again at once, not charged for, and refused:
+
+```
+ERROR: code=unsupported prefab=wood_floor at=(…) support=0.00 min=10.00 groundY=38.43 belowGround=0.82: …
+```
+
+Pieces that do not wear from lack of support, may not be removed, or stand in a
+world with the `NoBuildingFall` key are not refused. The OK line reports the
+`support` computed at placement; neighbours can change it later, so use
+`cli_piece_support_settle` to ask whether a finished structure stands.
+
 The hammer's other checks are made on its camera-driven ghost and are not
 applied: clipping, a player in the way, room to stand, ground type, dungeon and
 snow rules. Stamina, tool durability, skill gain and build statistics are not
-touched. Placement is not a claim that the piece is supported; the game settles
-support over the following frames.
+touched.
 
 Success reads:
 
 ```
-OK: placed prefab=wood_floor zdo=<id> at=(100.000,32.000,200.000) yaw=90.0 hammerStep=4 cheated=True noCost=True freeBuild=False
+OK: placed prefab=wood_floor zdo=<id> at=(100.000,32.000,200.000) yaw=90.0 hammerStep=4 cheated=True noCost=True freeBuild=False support=100.00
 ```
 
 `zdo` and `at` are read from the new piece, found by identity after the call, not
@@ -117,8 +133,10 @@ reproduce with the hammer.
 `cli_build_place_snapped` applies the rule in `Player.FindClosestSnapPoints`.
 The new piece's snap points are worked out at the requested transform; for each,
 the closest built snap point within `snapRadius` is found; the closest pair wins
-and the piece moves by that pair's offset. Neighbouring points come from pieces
-whose origin is within `snapRadius + 10` m. A second line reports the pair:
+and the piece moves by that pair's offset. Neighbouring points come from built
+pieces (ones with a network object) whose origin is within `snapRadius + 10` m;
+the hammer's own placement ghost, which it snaps onto whatever the player looks
+at, is never a neighbour. A second line reports the pair:
 
 ```
 SNAP snappedTo=wood_floor snappedToZdo=<id> theirPoint=(...) myPoint=(...) requested=(...) offset=(...) gapBefore=0.400 gapAfter=0.000 candidates=8

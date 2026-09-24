@@ -397,6 +397,34 @@ namespace valheimCLI
                 return false;
             }
 
+            // A piece with less than its minimum support is broken by the game
+            // at its next wear update (WearNTear.UpdateWear: UpdateSupport, then
+            // 100% damage when HaveSupport is false), which for a placed piece
+            // is within about a second. That is what happens to a piece buried
+            // in the ground or left in mid-air: the terrain counts as support
+            // only where the piece's bounds cross its surface. The same rule is
+            // applied here, now, and such a piece is removed again at once and
+            // not charged for, instead of being reported as placed.
+            WearNTear? wear = created.GetComponent<WearNTear>();
+            if (wear != null)
+            {
+                Physics.SyncTransforms();
+                wear.UpdateSupport();
+                string? unsupported = PlacementRules.SupportRefusal(wear.m_noSupportWear, wear.GetSupport(), wear.GetMinSupport(), wear.CanBeRemoved(),
+                    ZoneSystem.instance != null && ZoneSystem.instance.GetGlobalKey(GlobalKeys.NoBuildingFall));
+                if (unsupported != null)
+                {
+                    string ground = ZoneSystem.instance != null && ZoneSystem.instance.GetGroundHeight(position, out float groundY)
+                        ? string.Format(CultureInfo.InvariantCulture, "groundY={0:F2} belowGround={1:F2}", groundY, groundY - position.y)
+                        : "groundY=unknown";
+                    addOutput(string.Format(CultureInfo.InvariantCulture,
+                        "ERROR: code={0} prefab={1} at={2} support={3:F2} min={4:F2} {5}: the game breaks a piece below its minimum support at its next wear update; removed, not charged",
+                        unsupported, prefab, FormatVector3(position), wear.GetSupport(), wear.GetMinSupport(), ground));
+                    ZNetScene.instance.Destroy(created.gameObject);
+                    return false;
+                }
+            }
+
             // The hammer takes the resources after a successful placement unless
             // the world's free-build key is set -- in no-cost mode too, where it
             // takes whatever of them the inventory holds.
@@ -409,7 +437,7 @@ namespace valheimCLI
             placed = created;
             int? step = SnapGeometry.HammerStep(yaw);
             summary = $"prefab={prefab} zdo={ZdoId(created)} at={FormatVector3(created.transform.position)} yaw={yaw.ToString("F1", CultureInfo.InvariantCulture)} " +
-                      $"hammerStep={(step.HasValue ? step.Value.ToString(CultureInfo.InvariantCulture) : "none")} cheated={cheated} noCost={player.NoCostCheat()} freeBuild={freeBuild}";
+                      $"hammerStep={(step.HasValue ? step.Value.ToString(CultureInfo.InvariantCulture) : "none")} cheated={cheated} noCost={player.NoCostCheat()} freeBuild={freeBuild} support={(wear != null ? wear.GetSupport().ToString("F2", CultureInfo.InvariantCulture) : "none")}";
             return true;
         }
 
@@ -585,6 +613,13 @@ namespace valheimCLI
         /// neighbours through a physics overlap, which misses a piece placed
         /// earlier in the same frame until the physics scene syncs; the piece
         /// list does not.
+        ///
+        /// The piece list also holds pieces that are not built: copies made
+        /// with ZNetView.m_forceDisableInit, such as the hammer's placement
+        /// ghost, whose network view the game removes. The ghost follows the
+        /// camera and the hammer snaps it onto the pieces the player looks
+        /// at, so its snap points can coincide exactly with a real
+        /// neighbour's. Only a piece with a valid ZDO is a neighbour.
         /// </summary>
         private static List<(Piece Owner, Transform Point)> GatherWorldSnapPoints(Vector3 centre, float radius, string nameFilter)
         {
@@ -594,7 +629,7 @@ namespace valheimCLI
             List<Transform> points = new();
             foreach (Piece owner in pieces)
             {
-                if (owner == null || (!string.IsNullOrEmpty(nameFilter) && !MatchesPiece(owner, nameFilter)))
+                if (owner == null || !IsBuilt(owner) || (!string.IsNullOrEmpty(nameFilter) && !MatchesPiece(owner, nameFilter)))
                 {
                     continue;
                 }
@@ -625,6 +660,12 @@ namespace valheimCLI
 
             sb.Append($"OK: snapPoints={points.Count} centre={request.Centre.Format()} radius={F3(request.Radius)} filter='{request.NameFilter}'");
             EmitLines(sb, addOutput);
+        }
+
+        private static bool IsBuilt(Piece piece)
+        {
+            ZNetView? view = piece.GetComponent<ZNetView>();
+            return view != null && view.IsValid();
         }
 
         private static string ZdoId(Component component)
