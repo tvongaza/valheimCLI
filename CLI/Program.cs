@@ -285,6 +285,7 @@ class Program
         Console.WriteLine(
             "context " +
             $"game={FormatState(status.IsRunning ? "running" : "not_running")} " +
+            $"local_process={ToBool(status.ProcessSeenLocally)} " +
             $"state={FormatState(status.State)} " +
             $"phase={FormatState(status.LoadPhase)} " +
             $"cli={status.Host}:{status.Port} " +

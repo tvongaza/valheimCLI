@@ -43,7 +43,7 @@ game=${VALHEIM_PATH:-$(default_game_path)}
 plugins="$game/BepInEx/plugins"
 [ -d "$plugins" ] || { echo "ERROR: no BepInEx/plugins under $game (set VALHEIM_PATH)" >&2; exit 3; }
 
-if "$cli" --port "$port" --status 2>/dev/null | grep -q 'game=running'; then
+if "$cli" --port "$port" --status 2>/dev/null | grep -q 'local_process=true'; then
   echo "ERROR: Valheim is running; quit it first so the new build is the one that loads" >&2
   exit 5
 fi

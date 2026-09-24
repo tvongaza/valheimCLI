@@ -407,7 +407,8 @@ public class GameLauncher
                 client.TryGetConnectionStatus(out connectionStatus, out server);
                 return new GameStatus
                 {
-                    IsRunning = running,
+                    IsRunning = GameStatus.RunningFrom(running, connected),
+                    ProcessSeenLocally = running,
                     IsConnected = connected,
                     GamePath = _gamePath,
                     Host = _host,
@@ -430,6 +431,7 @@ public class GameLauncher
         return new GameStatus
         {
             IsRunning = running,
+            ProcessSeenLocally = running,
             IsConnected = connected,
             GamePath = _gamePath,
             Host = _host,
@@ -517,7 +519,18 @@ public class GameLauncher
 
 public class GameStatus
 {
+    /// <summary>
+    /// The game is running: its process is on this machine, or its plugin answers on
+    /// the port. A game reached through a tunnel, or a dedicated server (a process
+    /// under another name), has no local process named valheim but answers.
+    /// </summary>
     public bool IsRunning { get; set; }
+
+    /// <summary>A Valheim client process was found on this machine.</summary>
+    public bool ProcessSeenLocally { get; set; }
+
+    public static bool RunningFrom(bool processSeenLocally, bool pluginAnswered) => processSeenLocally || pluginAnswered;
+
     public bool IsConnected { get; set; }
     public string GamePath { get; set; } = "";
     public string Host { get; set; } = "";
