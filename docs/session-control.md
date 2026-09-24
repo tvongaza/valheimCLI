@@ -60,6 +60,81 @@ Use disposable worlds/characters for mutation tests and restore their files
 and plugin configuration after the session. Re-enable clutter before capture
 work ends if it was enabled at the start.
 
+## Place pieces from coordinates
+
+`cli_build_try_place_at` aims the camera and builds where the ray lands, so it
+cannot put a piece where no surface answers the ray: in mid-air, on top of
+another piece, behind a wall. These commands take the transform directly.
+
+| Command | Behaviour |
+| --- | --- |
+| `cli_build_place_at <piece> <x> <y> <z> [yaw] [nocost]` | Place one piece at exactly this position and heading |
+| `cli_build_snap_points <x> <y> <z> [radius=4] [nameFilter]` | List built pieces' snap points near a point, nearest first; places nothing |
+| `cli_build_place_snapped <piece> <x> <y> <z> [yaw] [snapRadius=0.5] [nocost]` | Place a piece near this position, moved so its closest snap point meets a built piece's |
+
+`<piece>` is a prefab or display name from the equipped build tool's table
+(`cli_build_list`), or `selected` for the piece chosen with `cli_build_select`.
+Equip a hammer first (`cli_give_item Hammer`, `cli_equip_item Hammer`); without
+one the reply is an `ERROR` naming what is equipped. `nocost` switches the
+player's no-cost mode on, as `cli_build_nocost true` does, and it stays on.
+
+Both call `Player.PlacePiece`, the call the hammer makes once its own checks
+pass. The piece therefore gets the local player as creator, runs
+`WearNTear.OnPlaced` and every `IPlaced` hook, plays its placement effect and is
+marked cheated on the hammer's terms. The resources are then taken as the hammer
+takes them: unless the world's free-build key is set, even in no-cost mode.
+This is the difference from `cli_spawn_piece`, which instantiates a prefab and
+nothing else.
+
+Before placing, the command refuses with `ERROR: code=<reason>`:
+
+| Code | Reason |
+| --- | --- |
+| `occupied` | The same piece already stands within 5 cm at the same heading, so a script that runs twice does not stack duplicates (the hammer's snapping rule) |
+| `not_loaded` | No terrain is loaded at the position; move a player there first |
+| `no_build_zone` | Inside a location that forbids building |
+| `private_zone` | A ward denies this player access |
+| `wrong_biome` | The piece is restricted to other biomes |
+| `missing_requirements` | Not in no-cost mode and the player lacks the resources or a crafting station |
+
+The hammer's other checks are made on its camera-driven ghost and are not
+applied: clipping, a player in the way, room to stand, ground type, dungeon and
+snow rules. Stamina, tool durability, skill gain and build statistics are not
+touched. Placement is not a claim that the piece is supported; the game settles
+support over the following frames.
+
+Success reads:
+
+```
+OK: placed prefab=wood_floor zdo=<id> at=(100.000,32.000,200.000) yaw=90.0 hammerStep=4 cheated=True noCost=True freeBuild=False
+```
+
+`zdo` and `at` are read from the new piece, found by identity after the call, not
+from the request. `hammerStep` is the scroll-wheel step (22.5° each) that gives
+this heading, or `none`: a level piece at any other yaw is one no player can
+reproduce with the hammer.
+
+`cli_build_place_snapped` applies the rule in `Player.FindClosestSnapPoints`.
+The new piece's snap points are worked out at the requested transform; for each,
+the closest built snap point within `snapRadius` is found; the closest pair wins
+and the piece moves by that pair's offset. Neighbouring points come from pieces
+whose origin is within `snapRadius + 10` m. A second line reports the pair:
+
+```
+SNAP snappedTo=wood_floor snappedToZdo=<id> theirPoint=(...) myPoint=(...) requested=(...) offset=(...) gapBefore=0.400 gapAfter=0.000 candidates=8
+```
+
+`gapAfter` is measured on the placed piece, not predicted; anything above a few
+millimetres means the piece did not meet its neighbour. When several pieces
+share a snap point, `snappedTo` names one of them; the offset is the same.
+No point within the radius gives `ERROR: code=no_snap_point` with the nearest
+gap found; `cli_build_snap_points` shows what is actually there. A piece without
+snap points gives `ERROR: code=no_snap_points`; place it with
+`cli_build_place_at`. The snap radius must be greater than zero and at most 10 m.
+
+Numbers must be finite and use a decimal point. A yaw or radius that does not
+parse is refused, never read as zero. `nocost` is only recognised last.
+
 ## Teleports the game refuses
 
 `Player.TeleportTo` does nothing while a teleport is running and for 2 s after
@@ -104,7 +179,8 @@ directly:
 | `cli_fly on` / `cli_fly off` | Set it; running either twice is harmless |
 | `cli_fly toggle` | Flip it |
 
-The reply is `OK: fly=True changed=True`, read back from the player. `cli_fly`
-is cheat-marked. On a dedicated-server client it needs `AllowOnServerClients`
-like the other test actions; it is covered by it because this plugin registers
-it.
+The reply is `OK: fly=True changed=True`, read back from the player. `cli_fly`,
+`cli_build_place_at` and `cli_build_place_snapped` are cheat-marked;
+`cli_build_snap_points` only reads. On a dedicated-server
+client they need `AllowOnServerClients` like the other test actions; they are
+covered by it because this plugin registers them.

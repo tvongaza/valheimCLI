@@ -119,6 +119,208 @@ namespace valheimCLI
                 bool noCost = HasNoCostFlag(args, 5);
                 TryPlaceAt(args[1], point, noCost, args.Context.AddString);
             });
+
+            _ = new Terminal.ConsoleCommand("cli_build_place_at", "Place a hammer piece at exact coordinates through the game's own placement call, with no camera and no ray: cli_build_place_at <prefab-or-name|selected> <x> <y> <z> [yaw] [nocost]", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            {
+                if (!PlacementRequest.TryParse(args.Args, snapped: false, out PlacementRequest? request, out string error))
+                {
+                    args.Context.AddString(error);
+                    return;
+                }
+
+                PlaceAt(request!, args.Context.AddString);
+            }, isCheat: true);
+
+            _ = new Terminal.ConsoleCommand("cli_build_snap_points", "List the snap points of built pieces near a point, nearest first: cli_build_snap_points <x> <y> <z> [radius=4] [nameFilter]", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            {
+                if (!SnapPointsRequest.TryParse(args.Args, out SnapPointsRequest? request, out string error))
+                {
+                    args.Context.AddString(error);
+                    return;
+                }
+
+                ListSnapPoints(request!, args.Context.AddString);
+            });
+
+            _ = new Terminal.ConsoleCommand("cli_build_place_snapped", "Place a hammer piece near coordinates, moved so its closest snap point meets a built piece's, as the hammer snaps: cli_build_place_snapped <prefab-or-name|selected> <x> <y> <z> [yaw] [snapRadius=0.5] [nocost]", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            {
+                if (!PlacementRequest.TryParse(args.Args, snapped: true, out PlacementRequest? request, out string error))
+                {
+                    args.Context.AddString(error);
+                    return;
+                }
+
+                PlaceSnapped(request!, args.Context.AddString);
+            }, isCheat: true);
+        }
+
+        // A piece's origin can stand several metres from its own snap points
+        // (a long beam, a large floor), so neighbours are gathered this much
+        // wider than the snap radius and then filtered on the points themselves.
+        private const float SnapNeighbourReach = 10f;
+
+        // Player.PlacePiece instantiates at exactly the position it is given, so
+        // the new piece is found within this distance of it.
+        private const float PlacedPieceTolerance = 0.05f;
+
+        /// <summary>
+        /// cli_build_place_at. cli_build_try_place_at aims the camera and builds
+        /// wherever the ray lands, so it cannot put a piece where no surface
+        /// answers the ray (in mid-air, on top of another piece, behind a wall).
+        /// This skips the ray and the ghost and calls Player.PlacePiece -- the
+        /// call the hammer makes once its checks pass -- with the transform
+        /// given, so the piece gets its creator, WearNTear.OnPlaced and every
+        /// IPlaced hook exactly as a player-built one does.
+        /// </summary>
+        private static void PlaceAt(PlacementRequest request, Action<string> addOutput)
+        {
+            if (!PreparePiece(request.Piece, request.NoCost, addOutput, out Player player, out Piece piece))
+            {
+                return;
+            }
+
+            if (!TryPlaceFromCoordinates(player, piece, ToVector(request.Position), request.Yaw, addOutput, out _, out string summary))
+            {
+                return;
+            }
+
+            addOutput($"OK: placed {summary}");
+        }
+
+        /// <summary>
+        /// cli_build_place_snapped: what the hammer does when it snaps. The new
+        /// piece's snap points are worked out at the requested transform, the
+        /// closest pair with a built neighbour's points is found (the rule in
+        /// Player.FindClosestSnapPoints, see SnapGeometry), and the piece is
+        /// moved by that pair's offset before it is placed. Pieces placed at
+        /// bare coordinates stand side by side without meeting; snapped ones
+        /// meet exactly, which is what makes them one connected structure.
+        /// </summary>
+        private static void PlaceSnapped(PlacementRequest request, Action<string> addOutput)
+        {
+            if (!PreparePiece(request.Piece, request.NoCost, addOutput, out Player player, out Piece piece))
+            {
+                return;
+            }
+
+            List<Transform> ownPoints = new();
+            piece.GetSnapPoints(ownPoints);
+            if (ownPoints.Count == 0)
+            {
+                addOutput($"ERROR: code=no_snap_points prefab={PrefabName(piece.gameObject)} has no snap points; use cli_build_place_at");
+                return;
+            }
+
+            // Worked out from the prefab rather than from the placement ghost,
+            // which the game moves every frame to follow the camera.
+            Point3 rootScale = ToPoint(piece.transform.localScale);
+            List<Point3> mine = ownPoints
+                .Select(point => SnapGeometry.ChildToWorld(request.Position, request.Yaw, rootScale, ToPoint(point.localPosition)))
+                .ToList();
+            List<(Piece Owner, Transform Point)> neighbours = GatherWorldSnapPoints(ToVector(request.Position), request.SnapRadius + SnapNeighbourReach, "");
+            List<Point3> theirs = neighbours.Select(entry => ToPoint(entry.Point.position)).ToList();
+
+            if (!SnapGeometry.TryClosestPair(mine, theirs, request.SnapRadius, out SnapMatch match, out float nearestGap))
+            {
+                string nearest = float.IsInfinity(nearestGap) ? "none" : F3(nearestGap);
+                addOutput($"ERROR: code=no_snap_point snapRadius={F3(request.SnapRadius)} candidates={theirs.Count} nearestGap={nearest}; cli_build_snap_points lists what is there");
+                return;
+            }
+
+            Point3 offset = theirs[match.Theirs] - mine[match.Mine];
+            if (!TryPlaceFromCoordinates(player, piece, ToVector(request.Position + offset), request.Yaw, addOutput, out Piece placed, out string summary))
+            {
+                return;
+            }
+
+            // Measured on the placed piece, not predicted: the distance between
+            // its snap point and the neighbour's after it was built.
+            List<Transform> placedPoints = new();
+            placed.GetSnapPoints(placedPoints);
+            Transform theirPoint = neighbours[match.Theirs].Point;
+            string gapAfter = match.Mine < placedPoints.Count ? F3(Vector3.Distance(placedPoints[match.Mine].position, theirPoint.position)) : "unknown";
+            Piece owner = neighbours[match.Theirs].Owner;
+
+            addOutput($"OK: placed {summary}");
+            addOutput($"SNAP snappedTo={PrefabName(owner.gameObject)} snappedToZdo={ZdoId(owner)} theirPoint={theirs[match.Theirs].Format()} myPoint={mine[match.Mine].Format()} " +
+                      $"requested={request.Position.Format()} offset={offset.Format()} gapBefore={F3(match.Gap)} gapAfter={gapAfter} candidates={theirs.Count}");
+        }
+
+        /// <summary>
+        /// The shared half of both coordinate placements: the position rules,
+        /// the game's own placement call, then the hammer's cost. What the
+        /// hammer decides on its camera-driven ghost -- clipping, a player in
+        /// the way, room to stand, ground type -- is not applied; nor are
+        /// stamina, tool durability, skill gain or the build statistics.
+        /// </summary>
+        private static bool TryPlaceFromCoordinates(Player player, Piece piece, Vector3 position, float yaw, Action<string> addOutput, out Piece placed, out string summary)
+        {
+            placed = null!;
+            summary = "";
+            string prefab = PrefabName(piece.gameObject);
+            Quaternion rotation = Quaternion.Euler(0f, yaw, 0f);
+
+            // The hammer will not snap a piece onto the same piece standing in
+            // the same place. Both commands apply that rule, so a script that
+            // runs twice does not stack duplicates.
+            List<Piece> occupants = new();
+            Piece.GetAllPiecesInRadius(position, PlacedPieceTolerance, occupants);
+            foreach (Piece occupant in occupants)
+            {
+                if (occupant != null && PrefabName(occupant.gameObject) == prefab &&
+                    SnapGeometry.OverlapsSamePiece(Vector3.Distance(occupant.transform.position, position), Quaternion.Angle(occupant.transform.rotation, rotation), piece.m_allowRotatedOverlap))
+                {
+                    addOutput($"ERROR: code=occupied prefab={prefab} zdo={ZdoId(occupant)} already stands at {FormatVector3(position)}");
+                    return false;
+                }
+            }
+
+            PrivateArea? ward = piece.GetComponent<PrivateArea>();
+            string? refusal = PlacementRules.Refusal(
+                ZoneSystem.instance != null && ZoneSystem.instance.GetGroundHeight(position, out float _),
+                Location.IsInsideNoBuildLocation(position),
+                !PrivateArea.CheckAccess(position, ward != null ? ward.m_radius : 0f, false, ward != null),
+                piece.m_onlyInBiome != Heightmap.Biome.None && (Heightmap.FindBiome(position) & piece.m_onlyInBiome) == 0,
+                !player.NoCostCheat() && !player.HaveRequirements(piece, Player.RequirementMode.CanBuild));
+            if (refusal != null)
+            {
+                addOutput($"ERROR: code={refusal} prefab={prefab} at={FormatVector(position)} noCost={player.NoCostCheat()}");
+                return false;
+            }
+
+            List<Piece> before = new();
+            Piece.GetAllPiecesInRadius(position, PlacedPieceTolerance, before);
+            HashSet<Piece> existing = new(before);
+
+            // Marked as cheated on the same terms the hammer uses.
+            bool cheated = (player.GetInventory().ItemCheated(piece.m_resources) || player.NoCostCheat()) && !PlayerProfile.s_bypassCheatChecks;
+            player.PlacePiece(piece, position, rotation, false, cheated);
+
+            // PlacePiece returns nothing, so the result is the new piece itself,
+            // found by identity: one that was not standing here before.
+            List<Piece> after = new();
+            Piece.GetAllPiecesInRadius(position, PlacedPieceTolerance, after);
+            Piece? created = after.FirstOrDefault(candidate => candidate != null && !existing.Contains(candidate) && PrefabName(candidate.gameObject) == prefab);
+            if (created == null)
+            {
+                addOutput($"ERROR: code=not_placed prefab={prefab} at={FormatVector(position)}: no new piece stands there after the placement call");
+                return false;
+            }
+
+            // The hammer takes the resources after a successful placement unless
+            // the world's free-build key is set -- in no-cost mode too, where it
+            // takes whatever of them the inventory holds.
+            bool freeBuild = ZoneSystem.instance != null && ZoneSystem.instance.GetGlobalKey(piece.FreeBuildKey());
+            if (!freeBuild)
+            {
+                player.ConsumeResources(piece.m_resources, 0);
+            }
+
+            placed = created;
+            int? step = SnapGeometry.HammerStep(yaw);
+            summary = $"prefab={prefab} zdo={ZdoId(created)} at={FormatVector3(created.transform.position)} yaw={yaw.ToString("F1", CultureInfo.InvariantCulture)} " +
+                      $"hammerStep={(step.HasValue ? step.Value.ToString(CultureInfo.InvariantCulture) : "none")} cheated={cheated} noCost={player.NoCostCheat()} freeBuild={freeBuild}";
+            return true;
         }
 
         private static void ListPieces(string filter, int limit, bool noCost, Action<string> addOutput)
@@ -286,6 +488,69 @@ namespace valheimCLI
             AppendPlacementDiagnostics(player, piece, sb);
             EmitLines(sb, addOutput);
         }
+
+        /// <summary>
+        /// Every snap point of every built piece within a radius, in world space,
+        /// asking each piece for its own points. The game's static helper finds
+        /// neighbours through a physics overlap, which misses a piece placed
+        /// earlier in the same frame until the physics scene syncs; the piece
+        /// list does not.
+        /// </summary>
+        private static List<(Piece Owner, Transform Point)> GatherWorldSnapPoints(Vector3 centre, float radius, string nameFilter)
+        {
+            List<(Piece, Transform)> found = new();
+            List<Piece> pieces = new();
+            Piece.GetAllPiecesInRadius(centre, radius + SnapNeighbourReach, pieces);
+            List<Transform> points = new();
+            foreach (Piece owner in pieces)
+            {
+                if (owner == null || (!string.IsNullOrEmpty(nameFilter) && !MatchesPiece(owner, nameFilter)))
+                {
+                    continue;
+                }
+
+                points.Clear();
+                owner.GetSnapPoints(points);
+                foreach (Transform point in points)
+                {
+                    if (point != null && Vector3.Distance(point.position, centre) <= radius)
+                    {
+                        found.Add((owner, point));
+                    }
+                }
+            }
+
+            return found;
+        }
+
+        private static void ListSnapPoints(SnapPointsRequest request, Action<string> addOutput)
+        {
+            Vector3 centre = ToVector(request.Centre);
+            List<(Piece Owner, Transform Point)> points = GatherWorldSnapPoints(centre, request.Radius, request.NameFilter);
+            StringBuilder sb = new();
+            foreach ((Piece owner, Transform point) in points.OrderBy(entry => Vector3.Distance(entry.Point.position, centre)))
+            {
+                sb.AppendLine($"SNAP piece={PrefabName(owner.gameObject)} zdo={ZdoId(owner)} point={FormatVector3(point.position)} dist={F3(Vector3.Distance(point.position, centre))}");
+            }
+
+            sb.Append($"OK: snapPoints={points.Count} centre={request.Centre.Format()} radius={F3(request.Radius)} filter='{request.NameFilter}'");
+            EmitLines(sb, addOutput);
+        }
+
+        private static string ZdoId(Component component)
+        {
+            ZNetView? view = component.GetComponent<ZNetView>();
+            ZDO? zdo = view != null && view.IsValid() ? view.GetZDO() : null;
+            return zdo != null ? zdo.m_uid.ToString() : "none";
+        }
+
+        private static Vector3 ToVector(Point3 point) => new(point.X, point.Y, point.Z);
+
+        private static Point3 ToPoint(Vector3 vector) => new(vector.x, vector.y, vector.z);
+
+        private static string F3(float value) => value.ToString("F3", CultureInfo.InvariantCulture);
+
+        private static string FormatVector3(Vector3 value) => ToPoint(value).Format();
 
         private static bool PreparePiece(string requestedPiece, bool noCost, Action<string> addOutput, out Player player, out Piece piece)
         {

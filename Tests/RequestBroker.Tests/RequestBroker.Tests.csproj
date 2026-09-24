@@ -17,6 +17,7 @@
     <Compile Include="../../Source/SessionArguments.cs" Link="Source/SessionArguments.cs" />
     <Compile Include="../../Source/CaptureCommands.cs" Link="Source/CaptureCommands.cs" />
     <Compile Include="../../Source/CommandArguments.cs" Link="Source/CommandArguments.cs" />
+    <Compile Include="../../Source/BuildPlacement.cs" Link="Source/BuildPlacement.cs" />
     <Compile Include="../../Source/PlayerModes.cs" Link="Source/PlayerModes.cs" />
     <Compile Include="../../CLI/Testing/CommandInfo.cs" Link="CLI/CommandInfo.cs" />
     <Compile Include="../../CLI/Testing/CommandMetadata.cs" Link="CLI/CommandMetadata.cs" />

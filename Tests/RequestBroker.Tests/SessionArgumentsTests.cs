@@ -70,6 +70,9 @@ namespace valheimCLI.Tests
         [InlineData("cli_cart", "local-player")]
         [InlineData("cli_build_rotate", "local-player")]
         [InlineData("cli_clutter", "loaded-world")]
+        [InlineData("cli_build_snap_points", "loaded-world")]
+        [InlineData("cli_build_place_at", "local-player")]
+        [InlineData("cli_build_place_snapped", "local-player")]
         [InlineData("cli_fly", "local-player")]
         [InlineData("cli_set_player_safety", "local-player")]
         public void ActionsDeclareExecutionContext(string name, string context)
