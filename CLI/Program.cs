@@ -444,7 +444,9 @@ class Program
             StopAfter = _stopAfter ? true : null, // Only set if flag was provided
             Variables = _variables,
             ArtifactsDirectory = _artifactsDir,
-            Json = _json
+            Json = _json,
+            ExpectFile = _expectFile,
+            ExpectStrict = _expectStrict
         };
 
         TestRunner runner = new TestRunner(launcher, options, _host, _port);
@@ -458,20 +460,33 @@ class Program
             totalFailed += result.Failed + result.Errors;
         }
 
+        CliExitCode exitCode = PlanExpectations.ExitCode(results.Select(result => result.Expectations), totalFailed);
         if (_json)
         {
             JsonOutput.Write(new
             {
-                ok = totalFailed == 0,
+                ok = exitCode == CliExitCode.Success,
                 command = "test",
                 state = "",
-                message = totalFailed == 0 ? "All test plans passed." : "One or more test plans failed.",
-                errorCode = totalFailed == 0 ? "" : "test_failed",
+                message = exitCode switch
+                {
+                    CliExitCode.Success => "All test plans passed.",
+                    CliExitCode.ExpectationMismatch => "The game does not match the expectations; no step ran.",
+                    CliExitCode.BadInput => "An expectations file could not be read; no step ran.",
+                    _ => "One or more test plans failed."
+                },
+                errorCode = exitCode switch
+                {
+                    CliExitCode.Success => "",
+                    CliExitCode.ExpectationMismatch => "expectation_mismatch",
+                    CliExitCode.BadInput => "bad_input",
+                    _ => "test_failed"
+                },
                 results
             });
         }
 
-        return totalFailed > 0 ? 1 : 0;
+        return (int)exitCode;
     }
 
     static async Task<int> RunLaunchMode()
@@ -693,7 +708,7 @@ class Program
         Console.WriteLine("  --interval <duration> Poll interval for wait/join operations");
         Console.WriteLine("  --artifacts <dir>     Test-run artifact directory");
         Console.WriteLine("  --var <key=value>     Set a test variable (can be used multiple times)");
-        Console.WriteLine("  --expect <file>       Check the game against an expectations file first; exit 6 on a mismatch");
+        Console.WriteLine("  --expect <file>       Check the game against an expectations file first (with --test, before the first step); exit 6 on a mismatch");
         Console.WriteLine("  --expect-strict <file> The same, and every loaded plugin (and the world) must be listed");
         Console.WriteLine("  --help                Show this help");
         Console.WriteLine();
@@ -794,21 +809,9 @@ class Program
     /// </summary>
     static int RunExpectCheck(string path, bool strict, bool quietOnPass)
     {
-        if (!File.Exists(path))
+        if (!PlanExpectations.TryLoad(path, strict, out string command, out string error))
         {
-            return PrintBadInput($"Expectations file not found: {path}");
-        }
-
-        List<string> errors = new();
-        List<Expectation> expectations = Expectations.ParseLines(File.ReadAllLines(path), errors);
-        if (errors.Count > 0)
-        {
-            return PrintBadInput($"{path}: {string.Join("; ", errors)}");
-        }
-
-        if (expectations.Count == 0)
-        {
-            return PrintBadInput($"{path} has no expectations");
+            return PrintBadInput(error);
         }
 
         using ValheimClient client = new ValheimClient(_host, _port) { CommandTimeout = _timeout };
@@ -817,8 +820,8 @@ class Program
             return PrintConnectionFailure();
         }
 
-        CommandResult result = client.ExecuteCommand(Expectations.ExpectCommand(expectations, strict));
-        if (result.Ok && quietOnPass)
+        ExpectationCheck check = PlanExpectations.Judge(new ExpectationSource { Path = path, Strict = strict }, client.SendCommand(command));
+        if (check.Held && quietOnPass)
         {
             return 0;
         }
@@ -827,24 +830,28 @@ class Program
         {
             JsonOutput.Write(new
             {
-                ok = result.Ok,
+                ok = check.Held,
                 command = "expect",
                 state = client.GetState(),
-                message = result.Ok ? $"{path} holds." : $"The game does not match {path}.",
-                errorCode = result.Ok ? "" : "expectation_mismatch",
-                output = result.Output
+                message = check.Message,
+                errorCode = check.Held ? "" : "expectation_mismatch",
+                output = check.Output
             });
         }
         else
         {
-            TextWriter writer = result.Ok ? Console.Out : Console.Error;
-            foreach (string line in result.Output)
+            TextWriter writer = check.Held ? Console.Out : Console.Error;
+            foreach (string line in check.Output)
             {
                 writer.WriteLine(line);
             }
+            if (check.Output.Count == 0)
+            {
+                writer.WriteLine($"ERROR: code=expectation_mismatch message={check.Message}");
+            }
         }
 
-        return result.Ok ? 0 : (int)CliExitCode.ExpectationMismatch;
+        return check.Held ? 0 : (int)CliExitCode.ExpectationMismatch;
     }
 
     /// <summary>

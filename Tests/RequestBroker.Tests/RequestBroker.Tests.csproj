@@ -4,6 +4,7 @@
     <!-- The broker is plain .NET (no Unity, no sockets): compiled here from the mod source. -->
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
     <RootNamespace>valheimCLI.Tests</RootNamespace>
   </PropertyGroup>
@@ -12,12 +13,17 @@
     <Compile Include="../../Source/RequestBroker.cs" Link="Source/RequestBroker.cs" />
     <Compile Include="../../Source/OperationGate.cs" Link="Source/OperationGate.cs" />
     <Compile Include="../../Source/Expectations.cs" Link="Source/Expectations.cs" />
+    <Compile Include="../../CLI/Testing/CliModels.cs" Link="CLI/CliModels.cs" />
+    <Compile Include="../../CLI/Testing/TestModels.cs" Link="CLI/TestModels.cs" />
+    <Compile Include="../../CLI/Testing/PlanExpectations.cs" Link="CLI/PlanExpectations.cs" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.10.0" />
     <PackageReference Include="xunit" Version="2.8.1" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.1" />
+    <!-- Test plans are YAML; the plan model is compiled from the CLI above. -->
+    <PackageReference Include="YamlDotNet" Version="16.2.1" />
   </ItemGroup>
 
 </Project>

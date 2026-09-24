@@ -1,8 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using YamlDotNet.Serialization;
-using YamlDotNet.Serialization.NamingConventions;
 
 namespace valheim_cli.Testing;
 
@@ -66,6 +64,19 @@ public class TestRunner
             Log($"  Tests: {plan.Tests.Count}", ConsoleColor.Gray);
             Log("");
 
+            // A missing or malformed expectations file stops the run before the game
+            // is launched or asked anything.
+            ExpectationSource? expectSource = PlanExpectations.Resolve(
+                _options.ExpectFile, _options.ExpectStrict, plan.Game.Expect, plan.Game.ExpectStrict, filePath);
+            string expectCommand = "";
+            if (expectSource != null &&
+                !PlanExpectations.TryLoad(expectSource.Path, expectSource.Strict, out expectCommand, out string expectError))
+            {
+                planResult.Expectations = PlanExpectations.Unreadable(expectSource, expectError);
+                LogExpectations(planResult.Expectations);
+                return Complete(planResult);
+            }
+
             // Determine launch settings (CLI overrides YAML)
             bool shouldLaunch = _options.Launch ?? plan.Game.Launch;
             bool shouldStopAfter = _options.StopAfter ?? plan.Game.StopAfter;
@@ -91,6 +102,19 @@ public class TestRunner
                 }
                 Log("Connected to Valheim", ConsoleColor.Green);
                 Log("");
+            }
+
+            // Checked once the game answers (after --launch, once the plugin's server
+            // is up) and before the first step: a game that does not match runs no
+            // step and no cleanup, as cleanup is part of the plan too.
+            if (expectSource != null)
+            {
+                planResult.Expectations = PlanExpectations.Judge(expectSource, _client!.SendCommand(expectCommand));
+                LogExpectations(planResult.Expectations);
+                if (!planResult.Expectations.Held)
+                {
+                    return Complete(planResult);
+                }
             }
 
             // Run each test case
@@ -152,10 +176,35 @@ public class TestRunner
             });
         }
 
+        return Complete(planResult);
+    }
+
+    private TestPlanResult Complete(TestPlanResult planResult)
+    {
         planResult.EndTime = DateTime.Now;
         WriteArtifacts(planResult);
         PrintSummary(planResult);
         return planResult;
+    }
+
+    private void LogExpectations(ExpectationCheck check)
+    {
+        if (check.Held)
+        {
+            Log($"Expectations {check.Summary()}", ConsoleColor.Green);
+            Log("");
+            return;
+        }
+
+        Log($"Expectations {check.Summary()}", ConsoleColor.Red);
+        foreach (string line in check.Output)
+        {
+            Log($"  {line}", ConsoleColor.Red);
+        }
+        if (check.Outcome == ExpectationOutcome.Mismatch && check.Output.Count == 0)
+        {
+            Log($"  {check.Message}", ConsoleColor.Red);
+        }
     }
 
     private async Task<bool> HandleGameLaunchAsync(TimeSpan timeout, CancellationToken cancellationToken)
@@ -525,6 +574,10 @@ public class TestRunner
         Log($"  Errors:  {result.Errors}", result.Errors > 0 ? ConsoleColor.Magenta : ConsoleColor.Gray);
         Log($"  Total:   {result.TestResults.Count}", ConsoleColor.White);
         Log($"  Duration: {result.TotalDuration.TotalSeconds:F2}s", ConsoleColor.Gray);
+        if (result.Expectations != null)
+        {
+            Log($"  Expectations: {result.Expectations.Summary()}", result.Expectations.Held ? ConsoleColor.Gray : ConsoleColor.Red);
+        }
         Log($"  Artifacts: {result.ArtifactDirectory}", ConsoleColor.Gray);
         Log("═══════════════════════════════════════════════════════", ConsoleColor.Cyan);
     }
@@ -546,6 +599,14 @@ public class TestRunner
         Directory.CreateDirectory(result.ArtifactDirectory);
         string transcriptPath = Path.Combine(result.ArtifactDirectory, "transcript.txt");
         List<string> transcript = new();
+        if (result.Expectations != null)
+        {
+            // An unreadable file's summary already carries its message.
+            transcript.Add(result.Expectations.Outcome == ExpectationOutcome.BadFile
+                ? $"[Expectations] {result.Expectations.Summary()}"
+                : $"[Expectations] {result.Expectations.Summary()}: {result.Expectations.Message}");
+            transcript.AddRange(result.Expectations.Output.Select(line => "  " + line));
+        }
         foreach (TestCaseResult test in result.TestResults)
         {
             transcript.Add($"[{test.Result}] {test.Name}: {test.Message}");
@@ -574,15 +635,7 @@ public class TestRunner
         }
     }
 
-    public static TestPlan ParseTestPlan(string yaml)
-    {
-        IDeserializer deserializer = new DeserializerBuilder()
-            .WithNamingConvention(CamelCaseNamingConvention.Instance)
-            .IgnoreUnmatchedProperties()
-            .Build();
-
-        return deserializer.Deserialize<TestPlan>(yaml);
-    }
+    public static TestPlan ParseTestPlan(string yaml) => TestPlan.Parse(yaml);
 }
 
 public class TestRunnerOptions
@@ -596,6 +649,10 @@ public class TestRunnerOptions
     public TimeSpan? LaunchTimeout { get; set; } = null;
     public string? ArtifactsDirectory { get; set; } = null;
     public bool Json { get; set; }
+
+    // --expect / --expect-strict (override the plan's game.expect and game.expectStrict)
+    public string? ExpectFile { get; set; } = null;
+    public bool ExpectStrict { get; set; } = false;
 
     // CLI variables (override YAML variables)
     public Dictionary<string, string> Variables { get; set; } = new();
