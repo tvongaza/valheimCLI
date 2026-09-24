@@ -28,6 +28,8 @@ variables:
   mod_answer: help       # and text its output must contain
 
 tests:
+  # Started in a world? This step fails within seconds (code=unreachable)
+  # instead of waiting out its timeout: log out first.
   - name: Main menu
     waitFor:
       state: MainMenu

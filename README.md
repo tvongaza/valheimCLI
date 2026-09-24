@@ -42,6 +42,7 @@ valheim> spawn Boar 5
 # Wait for a specific readiness state
 ./CLI/bin/Debug/net9.0/valheim-cli wait --for terminal --timeout 120s
 ./CLI/bin/Debug/net9.0/valheim-cli wait --for server-connected --timeout 180s --json
+./CLI/bin/Debug/net9.0/valheim-cli wait --for in-world --timeout 10m --stall 3m --progress 30s
 
 # Safe direct dedicated-server join. Prefer password files so secrets are not
 # printed by the shell or stored in command history.
@@ -137,14 +138,49 @@ The JSON launch response includes `phases`, `failurePhase`, `errorCode`, and the
 - `local-player`
 - `server-connected`
 
+A wait watches the whole status (process, plugin, state, load phase, location progress, connection) and ends in one of four ways:
+
+- **reached**: `OK: reached <target>; ...`, exit 0.
+- **timeout**: `--timeout` passed, `TIMEOUT: waiting for <target>; ...`, exit 2.
+- **stalled**: nothing in the status changed for `--stall` (default 120s; `0` disables), `ERROR: code=stalled ...`, exit 2. A stall is a timeout that came early, so it keeps the timeout's exit code.
+- **unreachable**: the game is in a state from which the target never comes without an action, `ERROR: code=unreachable ...`, exit 5. Waiting for `main-menu` while the game is in a world is the common case: the menu comes only after a logout (`cli_logout_save`) or a disconnect.
+
+While it waits, it prints a heartbeat every `--progress` (default 15s; `0` disables) to stderr, so stdout keeps only the result:
+
+```text
+WAIT: 45s/300s for in-world; state=InWorldNoPlayer phase=generating_locations connection=Connected locationProgress=0.412; changed: phase connecting_screen -> generating_locations, locationProgress 0.000 -> 0.412
+WAIT: 60s/300s for in-world; state=InWorldNoPlayer phase=loading_active_area connection=Connected; changed: phase generating_locations -> loading_active_area
+```
+
+A stalled or unreachable wait prints the last status to stderr after its result line. With `--json` each heartbeat is a one-line JSON event on stderr (`{"event":"wait-progress",...}`) and the final document on stdout carries `errorCode`, `elapsedSeconds`, `unchangedSeconds`, the `heartbeats` and the last `status`.
+
+How the decisions are made:
+
+- **Progress** is any change in state, load phase, location progress or count, locations generated, active area loaded, connection status or server, whether the game runs, whether the plugin answers, and (only while the game is starting and reports nothing else) the size of the BepInEx log. Timers such as `respawnWait` and `estimatedLocationSeconds` move on their own and do not count.
+- **The stall window** starts at the last change and is armed only once the game has been seen running, so a wait started ahead of a launch waits for the launch. 120s is conservative: location generation reports its progress and the load phases follow one another, but a heavily modded game between the plugin loading and the main menu, loading the area around the player on a slow disk, or a world save that holds the main thread can each sit on one value for about a minute. A stall window no shorter than `--timeout` never fires. Raise it, or pass `--stall 0`, for a wait during which a person acts in a menu (nothing in the status changes while a character is picked).
+- **Unreachable** is decided only from settled states, and only after the status has held for 15 s, which covers a logout or disconnect requested just before or just after the wait starts. Waiting for `main-menu` is unreachable when the game is in a world with its player and nothing is leaving it: the plugin does not report the world shutting down and the connection status shows no error or disconnect. A game that was running during the wait and stops is unreachable for every target but `process`. A server that rejects the connection (wrong version or password) ends a `server-connected` wait at once. Loading states (`Loading`, `InWorldNoPlayer`) are never unreachable, as entering and leaving a world pass through the same ones, and waiting for a world from the main menu is never unreachable, as a join may be queued; the stall window covers both. `--allow-unreachable` keeps waiting in any state, for a wait where someone else logs out; add `--stall 0` if that person may take longer than the stall window.
+
+The waits inside `--launch` and `join` print the same heartbeat but end only on their timeout (or a rejected connection), as before.
+
+A test plan's `waitFor` step behaves like `wait` for any target name (`MainMenu`, `InWorld`, ...) and prints the heartbeat under the step. It takes two optional keys: `stall` (a duration, `0` to disable; it overrides `--stall`) and `allowUnreachable: true`. `--progress`, `--stall` and `--allow-unreachable` on the command line apply to every `waitFor` step. A state that is not a wait target (`Loading`, `InWorldNoPlayer`) is still matched by name only.
+
+```yaml
+  - name: Load the world by hand
+    waitFor:
+      state: InWorld
+      timeout: 10m
+      stall: 0            # a person picks the character; nothing changes meanwhile
+      message: Load into a world to begin testing
+```
+
 Exit codes:
 
 - `0`: success
 - `1`: command or test failure
-- `2`: timeout
+- `2`: timeout, or a wait that stalled
 - `3`: connection failure
 - `4`: bad input
-- `5`: game not ready
+- `5`: game not ready, or a wait whose target cannot be reached from the game's state
 
 ## Test Layout And Artifacts
 

@@ -13,6 +13,12 @@
 #   4. prints log-summary.sh for the run: a plan that passed while the mod
 #      logged errors is worth a look
 #
+# Every wait prints a heartbeat (WAIT: elapsed, state, load phase, what
+# changed) every PROGRESS, so a slow load and a stuck one look different.
+# A plan's waitFor step also fails early when nothing changes for STALL, or
+# at once when the game sits in a state that cannot reach the target (a
+# world when the plan waits for the main menu).
+#
 # The game must not be running: a running game keeps the old build (and on
 # Windows locks the file). Quit it first, or reload without a restart via
 # BepInEx ScriptEngine where your mod supports it.
@@ -25,6 +31,9 @@
 #   VALHEIM_PATH      game folder that contains BepInEx (default: the Steam folder for this OS)
 #   CONFIGURATION     build configuration (default Release)
 #   STOP_AFTER=1      quit the game after a plan that passed
+#   PROGRESS          heartbeat interval, e.g. 30s (default 15s; 0 disables)
+#   STALL             end a plan's wait after this long without change
+#                     (default 120s; 0 disables; a step's own stall: wins)
 set -euo pipefail
 
 [ $# -ge 1 ] || { sed -n '2,6p' "$0" >&2; exit 4; }
@@ -60,14 +69,18 @@ cp "$dll" "$plugins/"
 pdb="${dll%.dll}.pdb"
 [ -f "$pdb" ] && cp "$pdb" "$plugins/"
 
+waits=()
+[ -n "${PROGRESS:-}" ] && waits+=(--progress "$PROGRESS")
+[ -n "${STALL:-}" ] && waits+=(--stall "$STALL")
+
 status=0
 if [ -n "$plan" ]; then
   echo "== launch and run $plan"
   stop=(); [ "${STOP_AFTER:-0}" = 1 ] && stop=(--stop-after)
-  "$cli" --port "$port" --test "$plan" --launch ${stop[@]+"${stop[@]}"} || status=$?
+  "$cli" --port "$port" --test "$plan" --launch ${stop[@]+"${stop[@]}"} ${waits[@]+"${waits[@]}"} || status=$?
 else
   echo "== launch"
-  "$cli" --port "$port" --launch --timeout 300s || status=$?
+  "$cli" --port "$port" --launch --timeout 300s ${waits[@]+"${waits[@]}"} || status=$?
 fi
 
 echo "== log"

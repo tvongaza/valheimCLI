@@ -17,9 +17,17 @@
 # Prints the matching line and exits 0; exits 2 on timeout (the same code
 # valheim-cli uses for a timeout).
 #
+# While it waits it prints a heartbeat to stderr every PROGRESS seconds, like
+# valheim-cli wait: elapsed time, how many lines arrived since the last one
+# and the latest of them, so a busy game and a silent one look different.
+# There is no stall detection here: a game in a world can log nothing for
+# minutes. To wait for a game state rather than a line, use
+# `valheim-cli wait --for ...`, which also fails early on a stall.
+#
 # Environment:
 #   VALHEIM_PATH  game folder that contains BepInEx (default: the Steam folder for this OS)
 #   VALHEIM_LOG   log file to follow instead of <VALHEIM_PATH>/BepInEx/LogOutput.log
+#   PROGRESS      heartbeat interval in seconds (default 15; 0 disables)
 #   VALHEIM_SSH   user@host: follow the log on that machine over ssh instead
 #                 (a macOS or Linux host; set VALHEIM_LOG to the path there).
 #                 On a Windows host the same wait is PowerShell's
@@ -33,6 +41,8 @@ limit=${2:-600}
 case "$limit" in ''|*[!0-9]*) usage ;; esac
 lines=0
 [ "${3:-}" = --from-start ] && lines=+1
+progress=${PROGRESS:-15}
+case "$progress" in ''|*[!0-9]*) usage ;; esac
 
 default_game_path() {
   case "$(uname -s)" in
@@ -66,16 +76,39 @@ fi
 tail_pid=$!
 exec 3<"$fifo"
 
-deadline=$((SECONDS + limit))
+start=$SECONDS
+deadline=$((start + limit))
+next_beat=$((start + progress))
+arrived=0
+latest=
 while [ "$SECONDS" -lt "$deadline" ]; do
-  # read blocks until a line arrives or the time left runs out.
-  if ! IFS= read -r -t $((deadline - SECONDS)) line <&3; then
+  # read blocks until a line arrives, the next heartbeat is due or the time
+  # left runs out. bash 3.2 returns the same status for a timeout as for the
+  # end of the stream, so a live tail is what tells them apart.
+  wait_for=$((deadline - SECONDS))
+  if [ "$progress" -gt 0 ] && [ $((next_beat - SECONDS)) -lt "$wait_for" ]; then
+    wait_for=$((next_beat - SECONDS))
+  fi
+  [ "$wait_for" -ge 1 ] || wait_for=1
+  if IFS= read -r -t "$wait_for" line <&3; then
+    line=${line%$'\r'}
+    if [[ $line =~ $regex ]]; then
+      printf '%s\n' "$line"
+      exit 0
+    fi
+    arrived=$((arrived + 1))
+    latest=$line
+  elif ! kill -0 "$tail_pid" 2>/dev/null; then
     break
   fi
-  line=${line%$'\r'}
-  if [[ $line =~ $regex ]]; then
-    printf '%s\n' "$line"
-    exit 0
+  if [ "$progress" -gt 0 ] && [ "$SECONDS" -ge "$next_beat" ]; then
+    if [ "$arrived" -gt 0 ]; then
+      echo "WAIT: $((SECONDS - start))s/${limit}s for /$regex/; $arrived new lines, latest: ${latest:0:120}" >&2
+    else
+      echo "WAIT: $((SECONDS - start))s/${limit}s for /$regex/; no new lines" >&2
+    fi
+    arrived=0
+    next_beat=$((SECONDS + progress))
   fi
 done
 

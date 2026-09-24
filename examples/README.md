@@ -39,6 +39,9 @@ in its header; copy them into your own project and change what you need.
   what it is waiting for (an async `cli_*` command, `valheim-cli wait
   --for ...`, a log line), never by sleeping and asking again. Give a wait
   every outcome, failures included, so a failure returns as quickly as a
-  success; only a timeout means nothing happened.
-- **Exit codes** follow `valheim-cli`: 0 success, 1 failure, 2 timeout,
-  3 connection or missing file, 4 bad input, 5 game not in the needed state.
+  success; only a timeout means nothing happened. Waits print a `WAIT:`
+  heartbeat to stderr (`PROGRESS` sets the interval), and `valheim-cli
+  wait` also ends early on a stall or a state that cannot reach its target.
+- **Exit codes** follow `valheim-cli`: 0 success, 1 failure, 2 timeout
+  or stall, 3 connection or missing file, 4 bad input, 5 game not in the
+  needed state.
