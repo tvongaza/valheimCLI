@@ -8,7 +8,7 @@
 # BepInEx/scripts, then waits with cli_await_plugin until an instance loaded
 # from exactly that file (same md5) is running. guid defaults to the DLL's file
 # name, which cli_await_plugin also accepts. For valheimCLI itself the waiting
-# connection closes when the new build replaces the old one; the script then
+# request ends when the new build unloads the old one (exit 3); the script then
 # reconnects and checks cli_build instead. Exits 0 when the new build runs.
 #
 # Environment:
@@ -18,12 +18,17 @@
 #                        library on macOS or Linux)
 #   RELOAD_TIMEOUT       seconds to wait for the reload (default 60)
 #   REMOTE_HOST          copy to this SSH host instead of the local game
-#   REMOTE_VALHEIM_PATH  game folder on REMOTE_HOST (required with REMOTE_HOST)
+#   REMOTE_VALHEIM_PATH  game folder on REMOTE_HOST (required with REMOTE_HOST),
+#                        e.g. "C:/Program Files (x86)/Steam/steamapps/common/Valheim"
+#   REMOTE_OS            posix, windows or auto (default auto: a host where
+#                        `uname -s` runs and is not MINGW/MSYS/Cygwin is posix)
 #
 # A remote game: the command server listens on 127.0.0.1 only, so forward its
 # port first (ssh -N -L 5555:127.0.0.1:5555 host) and set REMOTE_HOST and
-# REMOTE_VALHEIM_PATH; the files are streamed over ssh and moved into place
-# (a POSIX shell on the remote side).
+# REMOTE_VALHEIM_PATH. A POSIX host gets the files streamed over ssh. A
+# Windows host (OpenSSH server, any default shell) gets them by scp into the
+# SSH user's home folder, and PowerShell moves them into place; the script is
+# sent with -EncodedCommand, so no shell quoting is involved.
 set -euo pipefail
 
 usage() {
@@ -73,30 +78,124 @@ field() {
     return 0
 }
 
-# Copy the .pdb first (the watcher reacts to *.dll only), then write the DLL
-# under a temporary name and rename it into place, so ScriptEngine reads one
-# complete file.
+# Every deploy copies the .pdb first (the watcher reacts to *.dll only), then
+# writes the DLL under a name that is not *.dll and renames it into place in
+# the same folder, so ScriptEngine reads one complete file.
+deploy_local() {
+    local dir="$VALHEIM_PATH/BepInEx/scripts"
+    [[ -d "$VALHEIM_PATH/BepInEx" ]] || { echo "ERROR: no BepInEx folder under VALHEIM_PATH=$VALHEIM_PATH" >&2; exit 4; }
+    mkdir -p "$dir"
+    if [[ -f $pdb ]]; then
+        cp "$pdb" "$dir/"
+    fi
+    cp "$dll" "$dir/.$name.tmp"
+    mv -f "$dir/.$name.tmp" "$dir/$name"
+}
+
+# Streamed through ssh so the remote shell alone interprets the paths.
+deploy_posix() {
+    local dir="$REMOTE_VALHEIM_PATH/BepInEx/scripts" qdir qpdb qtmp qdll
+    printf -v qdir '%q' "$dir"
+    printf -v qpdb '%q' "$dir/$(basename "$pdb")"
+    printf -v qtmp '%q' "$dir/.$name.tmp"
+    printf -v qdll '%q' "$dir/$name"
+    ssh "$REMOTE_HOST" "mkdir -p $qdir"
+    if [[ -f $pdb ]]; then
+        ssh "$REMOTE_HOST" "cat > $qpdb" < "$pdb"
+    fi
+    ssh "$REMOTE_HOST" "cat > $qtmp && mv -f $qtmp $qdll" < "$dll"
+}
+
+# A PowerShell single-quoted literal: only ' needs doubling.
+ps_literal() {
+    printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"
+}
+
+# The files go by scp to fixed names in the SSH user's home folder (the
+# starting folder of both scp and ssh sessions), so no remote path needs
+# quoting. PowerShell then copies them next to the target under a name that
+# is not *.dll and swaps the DLL in with one rename. The PowerShell text
+# defines no functions: an alias (md, gc, h, ...) would win over a function
+# of the same name.
+deploy_windows() {
+    local up_dll="valheim-reload-upload.dll.part" up_pdb="valheim-reload-upload.pdb.part" has_pdb='$false'
+    if [[ -f $pdb ]]; then
+        scp -q "$pdb" "$REMOTE_HOST:$up_pdb"
+        has_pdb='$true'
+    fi
+    scp -q "$dll" "$REMOTE_HOST:$up_dll"
+    local ps
+    ps="\$game = $(ps_literal "$REMOTE_VALHEIM_PATH")
+\$name = $(ps_literal "$name")
+\$pdbName = $(ps_literal "$(basename "$pdb")")
+\$hasPdb = $has_pdb
+\$upDll = '$up_dll'
+\$upPdb = '$up_pdb'
+"
+    local body
+    # read -d '' ends at the end of input with status 1; the text is complete.
+    IFS= read -r -d '' body <<'PS' || true
+$ErrorActionPreference = 'Stop'
+$home0 = (Get-Location).ProviderPath
+$dir = [IO.Path]::Combine($game, 'BepInEx', 'scripts')
+[void][IO.Directory]::CreateDirectory($dir)
+if ($hasPdb) {
+    [IO.File]::Copy([IO.Path]::Combine($home0, $upPdb), [IO.Path]::Combine($dir, $pdbName), $true)
+    [IO.File]::Delete([IO.Path]::Combine($home0, $upPdb))
+}
+$part = [IO.Path]::Combine($dir, $name + '.part')
+$dest = [IO.Path]::Combine($dir, $name)
+[IO.File]::Copy([IO.Path]::Combine($home0, $upDll), $part, $true)
+[IO.File]::Delete([IO.Path]::Combine($home0, $upDll))
+if ([IO.File]::Exists($dest)) {
+    [IO.File]::Replace($part, $dest, [NullString]::Value)
+} else {
+    [IO.File]::Move($part, $dest)
+}
+PS
+    ps+=$body
+    local encoded
+    encoded=$(printf '%s' "$ps" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\r\n')
+    ssh "$REMOTE_HOST" "powershell -NoProfile -NonInteractive -EncodedCommand $encoded"
+}
+
+remote_os() {
+    local os uname_out
+    os=$(printf '%s' "${REMOTE_OS:-auto}" | tr '[:upper:]' '[:lower:]')
+    case $os in
+        posix | windows)
+            echo "$os"
+            return 0
+            ;;
+        auto) ;;
+        *)
+            echo "ERROR: REMOTE_OS must be posix, windows or auto (got $os)" >&2
+            exit 4
+            ;;
+    esac
+    if uname_out=$(ssh "$REMOTE_HOST" uname -s 2>/dev/null) && [[ -n $uname_out ]] &&
+        ! [[ $uname_out =~ MINGW|MSYS|CYGWIN|Windows ]]; then
+        echo posix
+    else
+        echo windows
+    fi
+}
+
 deploy() {
     if [[ -n ${REMOTE_HOST:-} ]]; then
         [[ -n ${REMOTE_VALHEIM_PATH:-} ]] || { echo "ERROR: REMOTE_VALHEIM_PATH is required with REMOTE_HOST" >&2; exit 4; }
-        # Streamed through ssh so the remote shell alone interprets the paths.
-        local dir="$REMOTE_VALHEIM_PATH/BepInEx/scripts" qdir qpdb qtmp qdll
-        printf -v qdir '%q' "$dir"
-        printf -v qpdb '%q' "$dir/$(basename "$pdb")"
-        printf -v qtmp '%q' "$dir/.$name.tmp"
-        printf -v qdll '%q' "$dir/$name"
-        ssh "$REMOTE_HOST" "mkdir -p $qdir"
-        [[ -f $pdb ]] && ssh "$REMOTE_HOST" "cat > $qpdb" < "$pdb"
-        ssh "$REMOTE_HOST" "cat > $qtmp && mv -f $qtmp $qdll" < "$dll"
+        local os
+        os=$(remote_os)
+        if [[ $os == windows ]]; then
+            deploy_windows
+        else
+            deploy_posix
+        fi
+        echo "copied $name ($new_md5) to $REMOTE_HOST ($os): BepInEx/scripts"
     else
-        local dir="$VALHEIM_PATH/BepInEx/scripts"
-        [[ -d "$VALHEIM_PATH/BepInEx" ]] || { echo "ERROR: no BepInEx folder under VALHEIM_PATH=$VALHEIM_PATH" >&2; exit 4; }
-        mkdir -p "$dir"
-        [[ -f $pdb ]] && cp "$pdb" "$dir/"
-        cp "$dll" "$dir/.$name.tmp"
-        mv -f "$dir/.$name.tmp" "$dir/$name"
+        deploy_local
+        echo "copied $name ($new_md5) to BepInEx/scripts"
     fi
-    echo "copied $name ($new_md5) to BepInEx/scripts"
 }
 
 new_md5=$(md5_of "$dll")
@@ -115,7 +214,7 @@ fi
 
 if ! $self; then
     if [[ $cli_source == scripts ]]; then
-        echo "note: valheimCLI is loaded from BepInEx/scripts too; ScriptEngine reloads it with $name, so the first wait ends when its connection closes" >&2
+        echo "note: valheimCLI is loaded from BepInEx/scripts too; ScriptEngine reloads it with $name, so the first wait ends when it is unloaded (exit 3)" >&2
     fi
     deploy
     set +e
@@ -144,8 +243,9 @@ if [[ $cli_source == plugins ]]; then
 fi
 deploy
 
-# The old instance holds this request until the new one replaces it and the
-# connection closes (exit 3); exit 0 means the new build already answered.
+# The old instance holds this request until the new one unloads it (exit 3:
+# code=unloaded or a closed connection); exit 0 means the new build already
+# answered.
 set +e
 cli cli_await_plugin "$cli_guid" "$new_md5" "$TIMEOUT"
 rc=$?

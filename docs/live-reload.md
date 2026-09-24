@@ -215,5 +215,17 @@ The interactive client reconnects on the next command.
 
 The command server listens on 127.0.0.1 only. Forward its port
 (`ssh -N -L 5555:127.0.0.1:5555 host`) and copy the files to the remote
-`BepInEx/scripts` with `scp`. The example copies over SSH when `REMOTE_HOST`
-and `REMOTE_VALHEIM_PATH` are set; the tunnel is yours to open.
+`BepInEx/scripts` over SSH. The example does the copy when `REMOTE_HOST` and
+`REMOTE_VALHEIM_PATH` are set; the tunnel is yours to open.
+
+- A macOS or Linux host gets the files streamed through `ssh` and renamed into
+  place.
+- A Windows host (OpenSSH server, whatever its default shell) gets them by
+  `scp` to fixed names in the SSH user's home folder; PowerShell, started with
+  `-EncodedCommand` so no shell quoting is involved, copies them next to the
+  target and swaps the DLL in with one rename. Give the game folder as, for
+  example, `REMOTE_VALHEIM_PATH="C:/Program Files (x86)/Steam/steamapps/common/Valheim"`.
+
+`REMOTE_OS=auto` (the default) takes a host where `uname -s` runs, and is not
+MINGW, MSYS or Cygwin, as macOS/Linux and any other as Windows; set
+`REMOTE_OS=posix` or `REMOTE_OS=windows` to skip the probe.
