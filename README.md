@@ -90,6 +90,16 @@ valheim-cli cli_until 30 ready=true road_zone_state 331 -516 64   # poll any com
 valheim-cli cli_capture E-side 347.5 57.5 -522.5 331.1 51.5 -515.6  # pose, wait for zones / heightmap rebuilds / weather, render 2 frames, save, wait for the file
 ```
 
+## Live Reload
+
+With BepInEx ScriptEngine installed, a plugin in `BepInEx/scripts` is reloaded
+when its DLL changes. `cli_await_plugin <guid|file.dll> [md5-prefix|-] [timeout]`
+waits until the reload has happened and proves which build loaded;
+`cli_build` says which valheimCLI build answers; valheimCLI unloads cleanly so it
+can be reloaded too. `examples/reload-plugin.sh <Plugin.dll> [guid]` copies a
+build and waits for it. Setup, the reload flow and what a plugin must undo in
+`OnDestroy` to reload cleanly: [docs/live-reload.md](docs/live-reload.md).
+
 ## Readiness And Exit Codes
 
 `--status` prints a compact agent-readable summary:
@@ -142,7 +152,9 @@ Exit codes:
 - `0`: success
 - `1`: command or test failure
 - `2`: timeout
-- `3`: connection failure
+- `3`: connection failure, including a connection that closed before its
+  command answered (`ERROR: code=connection_closed`: the server stopped or a
+  live reload replaced valheimCLI; the command is not resent)
 - `4`: bad input
 - `5`: game not ready
 
