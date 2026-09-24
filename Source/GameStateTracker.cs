@@ -101,6 +101,10 @@ namespace valheimCLI
         {
             string phase = DetectLoadPhase(state);
             bool gamePresent = Game.instance != null;
+            // A logout keeps the player and the world for a few frames (or through a
+            // long save); this says the world is on its way out, so a wait for the
+            // main menu knows the menu is coming.
+            bool shuttingDown = gamePresent && Game.instance!.IsShuttingDown();
             bool mainMenuPresent = FejdStartup.instance != null && Game.instance == null;
             bool localPlayerPresent = Player.m_localPlayer != null;
             ZNet? znet = ZNet.instance;
@@ -139,6 +143,7 @@ namespace valheimCLI
             return "state=" + StateToString(state) +
                    " phase=" + phase +
                    " game=" + Bool(gamePresent) +
+                   " shuttingDown=" + Bool(shuttingDown) +
                    " mainMenu=" + Bool(mainMenuPresent) +
                    " localPlayer=" + Bool(localPlayerPresent) +
                    " znet=" + Bool(znetPresent) +
