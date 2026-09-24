@@ -99,14 +99,36 @@ public class ValheimClient : IDisposable
         _writer = null;
     }
 
+    /// <summary>
+    /// The game state, or "Unknown" when the server does not answer. A server
+    /// that has just closed or reset the connection (it unloaded: a live
+    /// reload) is noticed here, not thrown: callers ask the state after a
+    /// command, and the command's own result must stand.
+    /// </summary>
     public string GetState()
     {
-        EnsureConnected();
+        if (_writer == null || _reader == null)
+            return "Unknown";
 
-        _writer!.WriteLine("STATE");
-        string? response = _reader!.ReadLine();
+        string? response;
+        try
+        {
+            _writer.WriteLine("STATE");
+            response = _reader.ReadLine();
+        }
+        catch (Exception ex) when (ex is IOException || ex is SocketException || ex is ObjectDisposedException)
+        {
+            Disconnect();
+            return "Unknown";
+        }
 
-        if (response != null && response.StartsWith("STATE:"))
+        if (response == null)
+        {
+            Disconnect();
+            return "Unknown";
+        }
+
+        if (response.StartsWith("STATE:"))
         {
             return response.Substring(6);
         }
@@ -279,11 +301,30 @@ public class ValheimClient : IDisposable
         }
         finally
         {
-            if (_stream != null)
-                _stream.ReadTimeout = previousReadTimeout;
+            RestoreReadTimeout(previousReadTimeout);
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Restores the read timeout after a command. The server may have reset the
+    /// connection meanwhile (it unloaded right after answering); the socket
+    /// option then fails (EINVAL on macOS), and the connection is dropped
+    /// instead of failing the command that already has its answer.
+    /// </summary>
+    private void RestoreReadTimeout(int timeout)
+    {
+        if (_stream == null)
+            return;
+        try
+        {
+            _stream.ReadTimeout = timeout;
+        }
+        catch (Exception ex) when (ex is SocketException || ex is IOException || ex is ObjectDisposedException)
+        {
+            Disconnect();
+        }
     }
 
     private bool _warnedNoCompletion;

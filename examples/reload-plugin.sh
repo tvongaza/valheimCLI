@@ -125,7 +125,8 @@ deploy_windows() {
     fi
     scp -q "$dll" "$REMOTE_HOST:$up_dll"
     local ps
-    ps="\$game = $(ps_literal "$REMOTE_VALHEIM_PATH")
+    ps="\$ProgressPreference = 'SilentlyContinue'
+\$game = $(ps_literal "$REMOTE_VALHEIM_PATH")
 \$name = $(ps_literal "$name")
 \$pdbName = $(ps_literal "$(basename "$pdb")")
 \$hasPdb = $has_pdb
@@ -136,7 +137,7 @@ deploy_windows() {
     # read -d '' ends at the end of input with status 1; the text is complete.
     IFS= read -r -d '' body <<'PS' || true
 $ErrorActionPreference = 'Stop'
-$home0 = (Get-Location).ProviderPath
+$home0 = [Environment]::CurrentDirectory
 $dir = [IO.Path]::Combine($game, 'BepInEx', 'scripts')
 [void][IO.Directory]::CreateDirectory($dir)
 if ($hasPdb) {
@@ -156,7 +157,30 @@ PS
     ps+=$body
     local encoded
     encoded=$(printf '%s' "$ps" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\r\n')
-    ssh "$REMOTE_HOST" "powershell -NoProfile -NonInteractive -EncodedCommand $encoded"
+    local err status=0
+    err=$(mktemp)
+    ssh "$REMOTE_HOST" "powershell -NoProfile -NonInteractive -EncodedCommand $encoded" 2>"$err" || status=$?
+    clixml_to_text <"$err" >&2
+    rm -f "$err"
+    return "$status"
+}
+
+# PowerShell run over ssh writes its error and progress streams to stderr as
+# CLIXML ("#< CLIXML" then one "<Objs ...>" line). Keep the error records as
+# plain text and drop the rest; any other line passes through unchanged.
+clixml_to_text() {
+    local line
+    while IFS= read -r line || [[ -n $line ]]; do
+        case $line in
+            "#< CLIXML"*) ;;
+            "<Objs"*)
+                printf '%s\n' "$line" | grep -o '<S S="Error">[^<]*</S>' |
+                    sed -e 's/<S S="Error">//' -e 's/<\/S>$//' -e 's/_x000D_//g' -e 's/_x000A_//g' \
+                        -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&quot;/"/g' -e "s/&apos;/'/g" -e 's/&amp;/\&/g' || true
+                ;;
+            *) printf '%s\n' "$line" ;;
+        esac
+    done
 }
 
 remote_os() {

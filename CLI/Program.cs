@@ -719,7 +719,9 @@ class Program
                 {
                     ok = result.Ok,
                     command = result.Command,
-                    state = client.IsConnected ? client.GetState() : "Unknown",
+                    // After a lost connection the state is unknown; asking would only
+                    // find out the same thing.
+                    state = ConnectionLoss.IsConnectionLoss(result.ErrorCode) ? "Unknown" : client.GetState(),
                     message = result.Message,
                     errorCode = result.ErrorCode,
                     output = result.Output

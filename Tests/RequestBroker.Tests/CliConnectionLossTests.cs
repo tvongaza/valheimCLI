@@ -124,6 +124,33 @@ public class CliConnectionLossTests
     }
 
     [Fact]
+    public async Task AskingTheStateAfterAnUnloadedAnswerSaysUnknownInsteadOfThrowing()
+    {
+        // The server answers "unloaded" and closes; the client has not noticed
+        // the close yet. The JSON output then asks the state, which threw and
+        // turned the result into unexpected_exception.
+        (Task server, int port) = Serve((client, writer) =>
+        {
+            writer.WriteLine("OUTPUT:1");
+            writer.WriteLine("ERROR: code=unloaded message=valheimCLI was unloaded (a live reload or cli_self_unload) before this command completed; reconnect and retry");
+            writer.WriteLine("END_OUTPUT");
+            client.LingerState = new LingerOption(true, 0);
+            client.Close();
+        });
+        using ValheimClient cli = new ValheimClient("127.0.0.1", port) { CommandTimeout = TimeSpan.FromSeconds(10) };
+        Assert.True(cli.Connect());
+
+        CommandResult result = cli.ExecuteCommand("cli_until 30 ready=true cli_build");
+        await server.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(ConnectionLoss.UnloadedCode, result.ErrorCode);
+        Assert.Equal((int)CliExitCode.ConnectionFailure, result.ExitCode);
+        Assert.Equal("Unknown", cli.GetState());
+        Assert.False(cli.IsConnected);
+        Assert.Equal("Unknown", cli.GetState());
+    }
+
+    [Fact]
     public void AServerThatUnloadedWithTheCommandOpenAlsoExitsThree()
     {
         CommandResult result = CommandResult.FromOutput("x", new List<string>
