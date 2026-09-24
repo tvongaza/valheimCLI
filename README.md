@@ -152,9 +152,10 @@ Exit codes:
 - `0`: success
 - `1`: command or test failure
 - `2`: timeout
-- `3`: connection failure, including a connection that closed before its
-  command answered (`ERROR: code=connection_closed`: the server stopped or a
-  live reload replaced valheimCLI; the command is not resent)
+- `3`: connection failure, including a command the server could not finish
+  because it stopped or a live reload replaced valheimCLI
+  (`ERROR: code=unloaded` from the server, or `ERROR: code=connection_closed`
+  when the connection closed first; the command is not resent)
 - `4`: bad input
 - `5`: game not ready
 

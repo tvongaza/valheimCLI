@@ -160,9 +160,9 @@ a longer wait.
 Keep `valheimCLI.dll` in `BepInEx/plugins` while you reload other plugins.
 ScriptEngine reloads everything in `BepInEx/scripts` together, so a copy of
 valheimCLI there is replaced by every reload, and the connection that was
-waiting closes. The client then exits with code 3 and
-`ERROR: code=connection_closed`; reconnect and ask again with the md5, which
-the same-pass rule answers at once.
+waiting is answered `ERROR: code=unloaded` (or closes first:
+`ERROR: code=connection_closed`). The client exits with code 3 either way;
+reconnect and ask again with the md5, which the same-pass rule answers at once.
 
 ## Reloading valheimCLI itself
 
@@ -177,10 +177,11 @@ OK: BUILD guid=valheimCLI.valheimCLI version=1.0.0 assembly=valheimCLI-639000000
 The md5 is of the file as it was when that instance loaded, so it does not
 change when the next build is copied over the file.
 
-`cli_await_plugin valheimCLI.valheimCLI <md5>` answers only one way: the
+`cli_await_plugin valheimCLI.valheimCLI <md5>` answers OK only one way: the
 instance answering is already that build (`self=true`). Otherwise it holds the
-request until the reload closes the connection (the event a script waits for),
-or times out when no reload came. Without an md5 it refuses at once.
+request until the reload unloads it, which answers `ERROR: code=unloaded` (the
+event a script waits for), or times out when no reload came. Without an md5 it
+refuses at once.
 
 The flow, which `examples/reload-plugin.sh` follows:
 
@@ -189,7 +190,8 @@ The flow, which `examples/reload-plugin.sh` follows:
    that copy is registered. The reply arrives, then the port closes.
 3. Copy the `.pdb` and `.dll` into `BepInEx/scripts`.
 4. `cli_await_plugin valheimCLI.valheimCLI <md5>`: exit 0 means the new build
-   already answers; exit 3 means the old one is gone.
+   already answers; exit 3 (`unloaded` or `connection_closed`) means the old
+   one is gone.
 5. `valheim-cli wait --for plugin-server`, then `cli_build` and compare the md5.
 
 During the reload the port is closed for a moment; the new command server
@@ -202,10 +204,12 @@ The newest instance therefore unloads any other before it opens the port, and
 logs a warning. Remove the `BepInEx/plugins` copy after moving
 valheimCLI to `BepInEx/scripts`.
 
-A closed connection is reported by the client as
-`ERROR: code=connection_closed` with exit code 3, and a failure to connect also
-exits 3. The command is never resent: it may have run. The interactive client
-reconnects on the next command.
+When valheimCLI unloads, every command still open is answered
+`ERROR: code=unloaded` before the port closes (the unload waits up to half a
+second for those replies to be written). A connection that closes before any
+answer is reported by the client as `ERROR: code=connection_closed`. Both exit
+3, as does a failure to connect. The command is never resent: it may have run.
+The interactive client reconnects on the next command.
 
 ## Remote game
 

@@ -89,6 +89,14 @@ namespace valheimCLI
         public void Stop()
         {
             _running = false;
+            // Answer every open request with an explicit error before the sockets
+            // close, and give the socket threads (they poll every 20 ms) up to half a
+            // second to write those replies. This runs on the game thread when the
+            // plugin unloads; without it a pending async command could come back empty.
+            _broker.Shutdown(RequestBroker.UnloadedLine);
+            System.Diagnostics.Stopwatch delivery = System.Diagnostics.Stopwatch.StartNew();
+            while (_broker.OpenCount > 0 && delivery.ElapsedMilliseconds < 500)
+                Thread.Sleep(10);
             _listener?.Stop();
 
             lock (_clientsLock)

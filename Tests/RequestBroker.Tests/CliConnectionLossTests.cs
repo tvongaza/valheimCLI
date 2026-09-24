@@ -124,6 +124,17 @@ public class CliConnectionLossTests
     }
 
     [Fact]
+    public void AServerThatUnloadedWithTheCommandOpenAlsoExitsThree()
+    {
+        CommandResult result = CommandResult.FromOutput("x", new List<string>
+        {
+            "ERROR: code=unloaded message=valheimCLI was unloaded (a live reload or cli_self_unload) before this command completed; reconnect and retry"
+        });
+        Assert.Equal(ConnectionLoss.UnloadedCode, result.ErrorCode);
+        Assert.Equal((int)CliExitCode.ConnectionFailure, result.ExitCode);
+    }
+
+    [Fact]
     public void OnlyAReceiveTimeoutCountsAsATimeout()
     {
         Assert.True(ConnectionLoss.IsReadTimeout(new IOException("t", new SocketException((int)SocketError.TimedOut))));

@@ -112,7 +112,7 @@ namespace valheimCLI
         {
             if (request.Md5Prefix == null)
             {
-                console("ERROR: code=self_await message=valheimCLI cannot report its own replacement (the connection closes when it is replaced); pass the new build's md5 so the instance answering can say whether it is that build, or reconnect after the reload and run cli_build");
+                console("ERROR: code=self_await message=valheimCLI cannot report its own replacement (it is unloaded before it could answer); pass the new build's md5 so the instance answering can say whether it is that build, or reconnect after the reload and run cli_build");
                 return;
             }
             if (LiveReload.Md5Matches(s_md5, request.Md5Prefix))

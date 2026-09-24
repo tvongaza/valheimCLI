@@ -113,9 +113,9 @@ namespace valheimCLI
                 }
                 finally
                 {
-                    // An async handler (BeginAsync) completes its request itself.
-                    if (!broker.IsAsync(request.Id))
-                        broker.Complete(request.Id);
+                    // An async handler (BeginAsync) completes its request itself,
+                    // possibly already inside the handler.
+                    broker.EndHandler(request.Id);
                     broker.CurrentRequestId = 0;
                 }
             }
@@ -801,9 +801,10 @@ namespace valheimCLI
                         _commandServer?.SendOutput(line);
                     }
                 }
-                else if (_commandServer == null || !_commandServer.Broker.IsAsync(_commandServer.Broker.CurrentRequestId))
+                else if (_commandServer == null || !_commandServer.Broker.BegunAsync(_commandServer.Broker.CurrentRequestId))
                 {
-                    // An async command answers through its handle later; nothing to confirm here.
+                    // An async command answers through its handle (later, or already
+                    // inside its handler); nothing to confirm here.
                     _commandServer?.SendOutput($"Executed: {command}");
                 }
             }
