@@ -4,6 +4,7 @@
     <!-- The broker is plain .NET (no Unity, no sockets): compiled here from the mod source. -->
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
     <RootNamespace>valheimCLI.Tests</RootNamespace>
     <!-- CallFixtures has a pointer-parameter method, which cli_call must refuse. -->
@@ -15,6 +16,7 @@
     <Compile Include="../../Source/OperationGate.cs" Link="Source/OperationGate.cs" />
     <Compile Include="../../Source/StaticMemberCall.cs" Link="Source/StaticMemberCall.cs" />
     <Compile Include="../../Source/CallValues.cs" Link="Source/CallValues.cs" />
+    <Compile Include="../../CLI/Testing/CliModels.cs" Link="CLI/CliModels.cs" />
   </ItemGroup>
 
   <ItemGroup>

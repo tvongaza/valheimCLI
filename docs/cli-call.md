@@ -130,10 +130,9 @@ Values are printed on one line:
   read only up to the limit plus one item (it may be endless), so its count
   is `items=?` when more remain.
 
-`valheim-cli` treats a reply as failed when a line starts with `ERROR:` or
-contains `usage:` or `timed out`. A returned string that contains either of
-the latter makes `valheim-cli` exit 1 although the call succeeded; the
-`OK: CALL` line is then still present.
+A reply that ends with `OK: CALL` is a success for `valheim-cli` whatever
+the returned value says: text such as `usage:` or `timed out` inside a
+`VALUE` line is data. Only an `ERROR:` line fails it.
 
 ## Errors
 
