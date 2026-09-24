@@ -25,7 +25,8 @@ namespace valheimCLI
     ///
     /// The md5 is of the plugin's file as it is on disk now, so a file replaced
     /// after the game loaded it would match: such a plugin reports
-    /// changed_since_load=yes and fails an md5 expectation.
+    /// changed_since_load=yes and fails an md5 expectation. A plugin a reloader
+    /// loaded from bytes has no known load time and reports unknown.
     ///
     /// With [Expectations] File set, the same check runs before every command
     /// the CLI sends, and everything but the diagnostics is refused while it
@@ -34,14 +35,21 @@ namespace valheimCLI
     public static class ManifestCommands
     {
         private static readonly DateTime ProcessStartUtc = Process.GetCurrentProcess().StartTime.ToUniversalTime();
-        /// <summary>When this assembly loaded; later than the process start when a plugin reloader loaded it.</summary>
-        private static readonly DateTime OwnLoadUtc = DateTime.UtcNow;
-        private static readonly string OwnFile = typeof(ManifestCommands).Assembly.Location;
+        /// <summary>When valheimCLI's plugin loaded (its Awake); later than the process start after a live reload.</summary>
+        private static DateTime? _ownLoadUtc;
         private static readonly Dictionary<string, (DateTime written, string md5)> Hashes = new Dictionary<string, (DateTime, string)>();
 
         internal static ConfigEntry<string>? FileConfig;
         internal static ConfigEntry<bool>? StrictConfig;
         private static readonly StandingExpectations Standing = new StandingExpectations();
+
+        /// <summary>
+        /// Records when valheimCLI loaded. Called from the plugin's Awake: a
+        /// static initialiser would run when this class is first used, and a
+        /// reloader loads the assembly from bytes, so neither the assembly's
+        /// location nor a field initialiser can say it.
+        /// </summary>
+        internal static void RecordOwnLoad(DateTime utc) => _ownLoadUtc = utc;
 
         public static void Register()
         {
@@ -172,8 +180,10 @@ namespace valheimCLI
                         Hashes[file] = cached;
                     }
                     p.Md5 = cached.md5;
-                    DateTime loaded = string.Equals(file, OwnFile, StringComparison.OrdinalIgnoreCase) ? OwnLoadUtc : ProcessStartUtc;
-                    p.ChangedSinceLoad = written > loaded;
+                    bool isOwn = kv.Key == valheimCLIPlugin.ModGUID;
+                    // An assembly loaded from bytes has no location: a reloader loaded it, at an unknown time.
+                    bool loadedFromBytes = info.Instance != null && string.IsNullOrEmpty(info.Instance.GetType().Assembly.Location);
+                    p.ChangedSinceLoad = Expectations.ChangedSinceLoad(isOwn, loadedFromBytes, written, _ownLoadUtc, ProcessStartUtc);
                 }
                 list.Add(p);
             }

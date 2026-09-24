@@ -54,7 +54,12 @@ and asks for the GUID.
 The md5 is of the DLL as it is on disk now. If the file was written after the
 game loaded it, the game may be running the previous build, so the plugin
 reports `changed_since_load=yes` and fails an md5 expectation (`any` still
-passes).
+passes). A plugin loaded at startup is compared with the time the game
+started; valheimCLI compares with the time it loaded itself, so a live reload
+of valheimCLI is judged correctly. Another plugin that a reloader such as
+ScriptEngine loaded from bytes after startup has no known load time: it
+reports `changed_since_load=unknown`, and an md5 expectation checks only its
+md5. A live-reload feature that loads the plugin can know more.
 
 World keys:
 

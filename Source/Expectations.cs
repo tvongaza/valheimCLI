@@ -18,8 +18,17 @@ namespace valheimCLI
         public string File = "";
         /// <summary>Lower-case hex md5 of the file; empty when there is no file.</summary>
         public string Md5 = "";
-        /// <summary>The file was written after the game loaded it: the running code may be an older build.</summary>
-        public bool ChangedSinceLoad;
+        /// <summary>Whether the file was written after the plugin loaded: if so, the running code may be an older build.</summary>
+        public FileChange ChangedSinceLoad;
+    }
+
+    /// <summary>Whether a plugin's file was written after the plugin loaded.</summary>
+    public enum FileChange
+    {
+        No,
+        Yes,
+        /// <summary>The plugin's load time is not known (a reloader loaded it from bytes after startup).</summary>
+        Unknown
     }
 
     /// <summary>The world the game is on, as cli_world reports it.</summary>
@@ -229,7 +238,7 @@ namespace valheimCLI
                 PluginFacts p = match[0];
                 if (p.Md5.Length == 0) problems.Add($"{e.Key}: has no file on disk to hash, expected {e.Value}");
                 else if (!p.Md5.StartsWith(e.Value, StringComparison.Ordinal)) problems.Add($"{e.Key}: md5 {Short(p.Md5)}, expected {e.Value} ({FileName(p)})");
-                else if (p.ChangedSinceLoad) problems.Add($"{e.Key}: file matches but was written after the game loaded it; the running code may be the previous build");
+                else if (p.ChangedSinceLoad == FileChange.Yes) problems.Add($"{e.Key}: file matches but was written after the game loaded it; the running code may be the previous build");
             }
 
             if (strict)
@@ -291,14 +300,37 @@ namespace valheimCLI
 
         private static string Short(string md5) => md5.Length > MinHashPrefix ? md5.Substring(0, MinHashPrefix) : md5;
 
+        /// <summary>
+        /// Whether a plugin's file was written after the plugin loaded.
+        /// valheimCLI knows its own load time (recorded in its Awake, however
+        /// it was loaded; null when not recorded). Another plugin loaded from
+        /// its file by the chainloader loaded at process start; one whose
+        /// assembly was loaded from bytes (a reloader such as ScriptEngine,
+        /// after startup) has no known load time, so the answer is Unknown
+        /// rather than a guess from the process start.
+        /// </summary>
+        public static FileChange ChangedSinceLoad(bool isOwn, bool loadedFromBytes, DateTime writtenUtc, DateTime? ownLoadUtc, DateTime processStartUtc)
+        {
+            if (isOwn)
+            {
+                if (ownLoadUtc == null) return FileChange.Unknown;
+                return writtenUtc > ownLoadUtc.Value ? FileChange.Yes : FileChange.No;
+            }
+            if (loadedFromBytes) return FileChange.Unknown;
+            return writtenUtc > processStartUtc ? FileChange.Yes : FileChange.No;
+        }
+
         // ---- report lines (the mod writes them, the CLI reads them) ----
 
         /// <summary>
-        /// PLUGIN guid=... name=... version=... md5=... changed_since_load=yes|no file=...
+        /// PLUGIN guid=... name=... version=... md5=... changed_since_load=yes|no|unknown file=...
         /// Every field but file has spaces written as _; file is last and verbatim.
         /// </summary>
         public static string FormatPlugin(PluginFacts p) =>
-            $"PLUGIN guid={Normalize(p.Guid)} name={Normalize(p.Name)} version={Normalize(p.Version)} md5={(p.Md5.Length > 0 ? p.Md5 : "-")} changed_since_load={(p.ChangedSinceLoad ? "yes" : "no")} file={p.File}";
+            $"PLUGIN guid={Normalize(p.Guid)} name={Normalize(p.Name)} version={Normalize(p.Version)} md5={(p.Md5.Length > 0 ? p.Md5 : "-")} changed_since_load={FileChangeName(p.ChangedSinceLoad)} file={p.File}";
+
+        private static string FileChangeName(FileChange change) =>
+            change == FileChange.Yes ? "yes" : change == FileChange.Unknown ? "unknown" : "no";
 
         /// <summary>The fields of a FormatPlugin line, or null when the line is not one.</summary>
         public static PluginFacts? ParsePlugin(string line)
@@ -313,7 +345,12 @@ namespace valheimCLI
                 Version = Get(f, "version"),
                 File = Get(f, "file"),
                 Md5 = md5 == "-" ? "" : md5,
-                ChangedSinceLoad = Get(f, "changed_since_load") == "yes"
+                ChangedSinceLoad = Get(f, "changed_since_load") switch
+                {
+                    "yes" => FileChange.Yes,
+                    "unknown" => FileChange.Unknown,
+                    _ => FileChange.No
+                }
             };
         }
 

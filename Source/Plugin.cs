@@ -15,7 +15,7 @@ namespace valheimCLI
         private const string ModName = "valheimCLI";
         private const string ModVersion = "1.0.0";
         private const string Author = "valheimCLI";
-        private const string ModGUID = Author + "." + ModName;
+        internal const string ModGUID = Author + "." + ModName;
         private static string ConfigFileName = ModGUID + ".cfg";
         private static string ConfigFileFullPath = BepInEx.Paths.ConfigPath + Path.DirectorySeparatorChar + ConfigFileName;
 
@@ -38,6 +38,7 @@ namespace valheimCLI
 
         public void Awake()
         {
+            ManifestCommands.RecordOwnLoad(DateTime.UtcNow);
             Instance = this;
 
             _enabledConfig = Config.Bind("Server", "Enabled", true, "Enable the command server");

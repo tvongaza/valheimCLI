@@ -148,9 +148,42 @@ public class ExpectationsTests
     public void AFileWrittenAfterLoadFailsAnMd5ButNotAny()
     {
         List<PluginFacts> plugins = Game();
-        plugins[0].ChangedSinceLoad = true;
+        plugins[0].ChangedSinceLoad = FileChange.Yes;
         Assert.Contains("written after the game loaded it", Assert.Single(Check(Parse("Jotunn=" + JotunnMd5), plugins: plugins)));
         Assert.Empty(Check(Parse("Jotunn=any"), plugins: plugins));
+    }
+
+    [Fact]
+    public void AnUnknownLoadTimeStillChecksTheMd5ButDoesNotFailOnIt()
+    {
+        List<PluginFacts> plugins = Game();
+        plugins[0].ChangedSinceLoad = FileChange.Unknown;
+        Assert.Empty(Check(Parse("Jotunn=" + JotunnMd5), plugins: plugins));
+        Assert.Equal("Jotunn: md5 01234567, expected 11111111 (Jotunn.dll)", Assert.Single(Check(Parse("Jotunn=11111111"), plugins: plugins)));
+    }
+
+    private static readonly DateTime ProcessStart = new DateTime(2000, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+    private static readonly DateTime ReloadedAt = ProcessStart.AddHours(1);
+
+    [Fact]
+    public void OwnPluginLiveReloadedFromBytesComparesWithItsOwnLoadTime()
+    {
+        // The file was written a second before the reload loaded it: unchanged,
+        // even though it is an hour newer than the process.
+        Assert.Equal(FileChange.No, Expectations.ChangedSinceLoad(isOwn: true, loadedFromBytes: true, ReloadedAt.AddSeconds(-1), ReloadedAt, ProcessStart));
+        Assert.Equal(FileChange.Yes, Expectations.ChangedSinceLoad(isOwn: true, loadedFromBytes: true, ReloadedAt.AddSeconds(1), ReloadedAt, ProcessStart));
+        Assert.Equal(FileChange.No, Expectations.ChangedSinceLoad(isOwn: true, loadedFromBytes: false, ProcessStart.AddSeconds(-5), ProcessStart.AddSeconds(2), ProcessStart));
+        Assert.Equal(FileChange.Yes, Expectations.ChangedSinceLoad(isOwn: true, loadedFromBytes: false, ProcessStart.AddSeconds(3), ProcessStart.AddSeconds(2), ProcessStart));
+        Assert.Equal(FileChange.Unknown, Expectations.ChangedSinceLoad(isOwn: true, loadedFromBytes: true, ReloadedAt, null, ProcessStart));
+    }
+
+    [Fact]
+    public void AnotherPluginComparesWithProcessStartUnlessLoadedFromBytes()
+    {
+        Assert.Equal(FileChange.No, Expectations.ChangedSinceLoad(isOwn: false, loadedFromBytes: false, ProcessStart.AddSeconds(-1), ReloadedAt, ProcessStart));
+        Assert.Equal(FileChange.Yes, Expectations.ChangedSinceLoad(isOwn: false, loadedFromBytes: false, ProcessStart.AddSeconds(1), ReloadedAt, ProcessStart));
+        Assert.Equal(FileChange.Unknown, Expectations.ChangedSinceLoad(isOwn: false, loadedFromBytes: true, ProcessStart.AddSeconds(-1), ReloadedAt, ProcessStart));
+        Assert.Equal(FileChange.Unknown, Expectations.ChangedSinceLoad(isOwn: false, loadedFromBytes: true, ReloadedAt.AddSeconds(1), ReloadedAt, ProcessStart));
     }
 
     // ---- world ----
@@ -234,15 +267,18 @@ public class ExpectationsTests
     [Fact]
     public void PluginLinesRoundTripWithSpacesInTheFileAndName()
     {
-        PluginFacts p = new PluginFacts { Guid = "a.b", Name = "My Mod", Version = "1.2.3", File = "/Steam Library/plugins/My Mod.dll", Md5 = JotunnMd5, ChangedSinceLoad = true };
+        PluginFacts p = new PluginFacts { Guid = "a.b", Name = "My Mod", Version = "1.2.3", File = "/Steam Library/plugins/My Mod.dll", Md5 = JotunnMd5, ChangedSinceLoad = FileChange.Yes };
         string line = Expectations.FormatPlugin(p);
         Assert.Equal($"PLUGIN guid=a.b name=My_Mod version=1.2.3 md5={JotunnMd5} changed_since_load=yes file=/Steam Library/plugins/My Mod.dll", line);
         PluginFacts back = Expectations.ParsePlugin(line)!;
         Assert.Equal(("a.b", "My_Mod", "1.2.3", "/Steam Library/plugins/My Mod.dll", JotunnMd5, true),
-            (back.Guid, back.Name, back.Version, back.File, back.Md5, back.ChangedSinceLoad));
+            (back.Guid, back.Name, back.Version, back.File, back.Md5, back.ChangedSinceLoad == FileChange.Yes));
+        p.ChangedSinceLoad = FileChange.Unknown;
+        Assert.Contains(" changed_since_load=unknown ", Expectations.FormatPlugin(p));
+        Assert.Equal(FileChange.Unknown, Expectations.ParsePlugin(Expectations.FormatPlugin(p))!.ChangedSinceLoad);
 
         PluginFacts none = Expectations.ParsePlugin(Expectations.FormatPlugin(new PluginFacts { Guid = "mem" }))!;
-        Assert.Equal(("", "", false), (none.Md5, none.File, none.ChangedSinceLoad));
+        Assert.Equal(("", "", FileChange.No), (none.Md5, none.File, none.ChangedSinceLoad));
         Assert.Null(Expectations.ParsePlugin("OK: MANIFEST plugins=2"));
     }
 
