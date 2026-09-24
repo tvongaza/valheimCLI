@@ -211,8 +211,8 @@ ERROR: code=teleport_refused reason=the first-spawn intro is in progress; the va
 
 `cli_arrive` refuses these rather than waiting them out: the intro moves on only
 when a person dismisses its text, and an attachment ends only when someone
-leaves it. Finish or skip the intro (`cli_check_intro_complete` says whether it
-is over) and stand up before arriving.
+leaves it. End the intro with `cli_skip_intro` (below) and stand up before
+arriving.
 
 Otherwise `cli_arrive` offers its teleport every frame until the game accepts
 it, then waits for landing and loaded zones as before. A landing then has to
@@ -227,6 +227,36 @@ landings of accepted teleports. A timeout before any acceptance is
 failure line carries `inIntro`, `valkyrieCarrying` (a valkyrie that has not yet
 dropped the player), `attached`, `dead`, `teleporting` and `position`. A
 forwarded request fails at once.
+
+## Skip the new-character intro
+
+A new character's first spawn plays the intro: the game queues it when the
+world starts, shows its text, and spawns the player on a valkyrie that carries
+it to the start. Teleports are refused throughout (above), and it ends only
+when someone dismisses the text or presses Skip in the menu.
+
+| Command | Effect |
+|---|---|
+| `cli_create_character <name> --skip-intro` | Save the new character as already spawned once: it lands at the start like a returning one, and the intro never runs |
+| `cli_skip_intro [timeout=60]` | In a world: do what the menu's Skip button does, and wait until the player has respawned on the ground |
+| `valheim-cli join ... --create-character --skip-intro` | Create the character with `--skip-intro`, then join |
+
+`cli_skip_intro` also stops an intro that is queued but not yet showing, and
+clears the character's first-spawn flag, which the game would clear after the
+spawn anyway, so the respawn brings no valkyrie. Skipping respawns the player,
+so the command waits for the new player (the one from before the skip is
+destroyed) and replies once it stands in the world:
+
+```
+OK: skipped=True profileFirstSpawn=True position=… ms=…
+OK: skipped=False profileFirstSpawn=False position=… ms=…
+ERROR: code=skip_intro_timeout pending=the player has not respawned skipped=True ms=…
+```
+
+`skipped=False` means there was no intro to end; running it twice is harmless.
+It is not cheat-gated (the menu offers the same skip to every player) and runs
+one at a time with the other commands that move the player. `cli_create_character`
+reports `intro=on` or `intro=skipped`.
 
 ## Player safety and fly
 

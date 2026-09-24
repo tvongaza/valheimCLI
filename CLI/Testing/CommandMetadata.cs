@@ -41,7 +41,7 @@ public static class CommandMetadata
             return "server-world";
         }
 
-        if (name is "cli_ground_height" or "cli_surface_at" or "cli_paint_at" or "cli_piece_geometry" or "cli_prefabs_at" or "cli_terrain_ops" or "cli_terrain_edit" or "cli_spawn_piece" or "cli_clutter" or "cli_build_snap_points" or "cli_piece_support_settle")
+        if (name is "cli_ground_height" or "cli_surface_at" or "cli_paint_at" or "cli_piece_geometry" or "cli_prefabs_at" or "cli_terrain_ops" or "cli_terrain_edit" or "cli_spawn_piece" or "cli_clutter" or "cli_build_snap_points" or "cli_piece_support_settle" or "cli_skip_intro")
         {
             return "loaded-world";
         }

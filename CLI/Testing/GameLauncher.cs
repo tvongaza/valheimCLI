@@ -245,7 +245,8 @@ public class GameLauncher
         bool createCharacter,
         TimeSpan timeout,
         TimeSpan interval,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool skipIntro = false)
     {
         JoinResult result = new() { Server = server };
         GameStatus terminalStatus = await WaitForTargetAsync(WaitTarget.Terminal, timeout, interval, cancellationToken);
@@ -278,7 +279,7 @@ public class GameLauncher
             }
 
             string command = createCharacter
-                ? $"cli_create_character {character} --local"
+                ? $"cli_create_character {character} --local" + (skipIntro ? " --skip-intro" : "")
                 : $"cli_select_character {character}";
             CommandResult characterResult = client.ExecuteCommand(command);
             result.Steps.Add(characterResult);

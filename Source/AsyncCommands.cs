@@ -24,9 +24,10 @@ namespace valheimCLI
     ///                                                        env transition, render two frames, capture to a request-specific file,
     ///                                                        verify the PNG, move it into place
     ///   cli_until   <timeout> <needle> <command...>          re-run a console command until a line contains needle
+    ///   cli_skip_intro [timeout=60]                          end the first-spawn intro as the menu's Skip does, wait for the respawn
     ///   cli_clear_view is the verified clear (CustomCommands): destroy, recount next frame, repeat up to three passes
     ///
-    /// Arrive, env, capture and clear share the player and the camera, so they
+    /// Arrive, env, capture, clear and skip_intro share the player and the camera, so they
     /// run one at a time through an OperationGate: a second one waits its turn.
     /// When a request times out the server abandons it; the coroutine then
     /// issues no further actions, lets an effect it already started settle
@@ -92,6 +93,17 @@ namespace valheimCLI
                 float timeout = args.Length >= 10 && TryF(args[9], out float t) ? t : 20f;
                 Start("capture", args.Context.AddString, ctx => Capture(ctx, args[1], new Vector3(cx, cy, cz), new Vector3(lx, ly, lz), supersize, timeout), gated: true);
             }, isCheat: true);
+
+            new Terminal.ConsoleCommand("cli_skip_intro", "End the new-character intro (the valkyrie ride) as the menu's Skip button does, or stop it before it starts, and wait until the player has respawned on the ground: cli_skip_intro [timeout=60]. Reports skipped=false when there was no intro.", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            {
+                float timeout = 60f;
+                if (args.Length > 2 || (args.Length == 2 && (!TryF(args[1], out timeout) || timeout <= 0f)))
+                {
+                    args.Context.AddString("Usage: cli_skip_intro [timeout=60]");
+                    return;
+                }
+                Start("skip_intro", args.Context.AddString, ctx => SkipIntro(ctx, timeout), gated: true);
+            });
 
             new Terminal.ConsoleCommand("cli_until", "Re-run a console command every 250 ms until one of its output lines contains the needle, then return that output: cli_until <timeout> <needle> <command...>", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
             {
@@ -188,6 +200,65 @@ namespace valheimCLI
             // The request was abandoned: this line is dropped by the broker, the log keeps it.
             valheimCLIPlugin.Log.LogWarning($"Async {ctx.Name} #{ctx.Id} cancelled after its request timed out; {settled}");
             ctx.Output($"CANCELLED: {ctx.Name} {settled}");
+        }
+
+        // ---- cli_skip_intro ----
+        private static IEnumerator SkipIntro(Context ctx, float timeout)
+        {
+            Game game = Game.instance;
+            PlayerProfile? profile = game != null ? game.GetPlayerProfile() : null;
+            if (game == null || profile == null)
+            {
+                ctx.Output("ERROR: code=no_world message=no game or player profile; join or start a world first");
+                yield break;
+            }
+            Stopwatch clock = Stopwatch.StartNew();
+            // Cleared first, so an intro not yet queued (the game queues it
+            // when the world starts) never starts, and the respawn below does
+            // not bring a valkyrie. The game clears it after the first spawn
+            // anyway; it is saved with the character.
+            bool firstSpawn = profile.m_firstSpawn;
+            profile.m_firstSpawn = false;
+            Player before = Player.m_localPlayer;
+            bool active = IntroActive(game);
+            if (active)
+            {
+                // What the menu's Skip button calls: drops the valkyrie, hides
+                // the intro text and respawns the player at the start.
+                game.SkipIntro();
+            }
+            string pending = "";
+            while (clock.Elapsed.TotalSeconds < timeout && !ctx.Cancelled)
+            {
+                Player player = Player.m_localPlayer;
+                bool spawned = player != null;
+                bool respawned = !active || (spawned && player != before);
+                bool introActive = IntroActive(game);
+                bool waiting = game.WaitingForRespawn();
+                if (PlayerModes.IntroSkipSettled(spawned, respawned, waiting, introActive))
+                {
+                    Vector3 p = player!.transform.position;
+                    ctx.Output($"OK: skipped={active} profileFirstSpawn={firstSpawn} position={p.x:F1},{p.y:F1},{p.z:F1} ms={clock.ElapsedMilliseconds}");
+                    yield break;
+                }
+                pending = PlayerModes.IntroSkipPending(spawned, respawned, waiting, introActive);
+                yield return null;
+            }
+            if (ctx.Cancelled)
+            {
+                Cancelled(ctx, "the respawn it asked for completes on its own");
+                yield break;
+            }
+            ctx.Output($"ERROR: code=skip_intro_timeout pending={pending} skipped={active} ms={clock.ElapsedMilliseconds}");
+        }
+
+        private static bool IntroActive(Game game)
+        {
+            Player player = Player.m_localPlayer;
+            Valkyrie valkyrie = Valkyrie.m_instance;
+            return PlayerModes.IntroActive(game.InIntro(includeQueued: true) && !game.InIntro(), game.InIntro(),
+                valkyrie != null && valkyrie.enabled && !valkyrie.m_droppedPlayer,
+                player != null && player.InIntro());
         }
 
         // ---- cli_arrive ----

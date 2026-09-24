@@ -171,20 +171,22 @@ namespace valheimCLI
             {
                 if (parts.Length < 2)
                 {
-                    _commandServer?.SendOutput("Usage: cli_create_character <name> [--replace] [--local]");
+                    _commandServer?.SendOutput("Usage: cli_create_character <name> [--replace] [--local] [--skip-intro]");
                     return true;
                 }
 
                 bool replace = false;
                 bool forceLocal = false;
+                bool skipIntro = false;
                 for (int i = 2; i < parts.Length; i++)
                 {
                     replace |= parts[i].Equals("--replace", StringComparison.OrdinalIgnoreCase);
                     forceLocal |= parts[i].Equals("--local", StringComparison.OrdinalIgnoreCase);
+                    skipIntro |= parts[i].Equals("--skip-intro", StringComparison.OrdinalIgnoreCase);
                 }
 
                 forceLocal |= replace;
-                CustomCommands.CreateCharacter(parts[1], replace, forceLocal, line => _commandServer?.SendOutput(line));
+                CustomCommands.CreateCharacter(parts[1], replace, forceLocal, skipIntro, line => _commandServer?.SendOutput(line));
                 return true;
             }
 

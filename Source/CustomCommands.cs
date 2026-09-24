@@ -30,25 +30,27 @@ namespace valheimCLI
             CartCommands.Register();
             AsyncCommands.Register();
 
-            new Terminal.ConsoleCommand("cli_create_character", "Create and select a local character: cli_create_character <name> [--replace] [--local]", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            new Terminal.ConsoleCommand("cli_create_character", "Create and select a local character: cli_create_character <name> [--replace] [--local] [--skip-intro]. --skip-intro saves it as already spawned once, so it lands at the start without the valkyrie intro", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
             {
                 if (args.Length < 2)
                 {
-                    args.Context.AddString("Usage: cli_create_character <name> [--replace] [--local]");
+                    args.Context.AddString("Usage: cli_create_character <name> [--replace] [--local] [--skip-intro]");
                     return;
                 }
 
                 string characterName = args[1].Trim();
                 bool replace = false;
                 bool forceLocal = false;
+                bool skipIntro = false;
                 for (int i = 2; i < args.Length; i++)
                 {
                     replace |= args[i].Equals("--replace", StringComparison.OrdinalIgnoreCase);
                     forceLocal |= args[i].Equals("--local", StringComparison.OrdinalIgnoreCase);
+                    skipIntro |= args[i].Equals("--skip-intro", StringComparison.OrdinalIgnoreCase);
                 }
 
                 forceLocal |= replace;
-                CreateCharacter(characterName, replace, forceLocal, args.Context.AddString);
+                CreateCharacter(characterName, replace, forceLocal, skipIntro, args.Context.AddString);
             });
 
             new Terminal.ConsoleCommand("cli_select_character", "Select an existing character: cli_select_character <name-or-filename>", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
@@ -2339,7 +2341,7 @@ namespace valheimCLI
             return itemData;
         }
 
-        public static void CreateCharacter(string characterName, bool replace, bool forceLocal, Action<string> addOutput)
+        public static void CreateCharacter(string characterName, bool replace, bool forceLocal, bool skipIntro, Action<string> addOutput)
         {
             if (characterName.Length < 3)
             {
@@ -2388,6 +2390,17 @@ namespace valheimCLI
                 profile.m_fileSource = FileHelpers.FileSource.Local;
             }
 
+            // A new profile is marked for the first-spawn intro: the game
+            // queues it when the world starts and spawns the player on a
+            // valkyrie that holds it (and refuses teleports) until someone
+            // dismisses the text. Saved as already spawned once, the character
+            // lands at the start like a returning one; the game clears this
+            // flag itself after the first spawn.
+            if (skipIntro)
+            {
+                profile.m_firstSpawn = false;
+            }
+
             previewPlayer.GiveDefaultItems();
             profile.SetName(characterName);
             profile.SavePlayerData(previewPlayer);
@@ -2403,7 +2416,7 @@ namespace valheimCLI
             PlatformPrefs.SetString("profile", filename);
             Game.SetProfile(filename, profile.m_fileSource);
 
-            addOutput($"OK: Created and selected character '{characterName}' ({profile.m_fileSource})");
+            addOutput($"OK: Created and selected character '{characterName}' ({profile.m_fileSource}) intro={(profile.m_firstSpawn ? "on" : "skipped")}");
         }
 
         public static void SelectCharacter(string characterNameOrFilename, Action<string> addOutput)

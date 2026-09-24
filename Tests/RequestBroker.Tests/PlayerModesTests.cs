@@ -75,7 +75,55 @@ namespace valheimCLI.Tests
             Assert.Equal(TeleportAnswer.Intro, answer);
             Assert.False(asked);
             Assert.Contains("intro", PlayerModes.DescribeRefusal(answer));
+            Assert.Contains("cli_skip_intro", PlayerModes.DescribeRefusal(answer));
             Assert.False(PlayerModes.WorthRetrying(answer));
+        }
+
+        /// <summary>Each stage of the intro counts: queued before it shows, the text, the ride, the player's own flag.</summary>
+        [Theory]
+        [InlineData(true, false, false, false)]
+        [InlineData(false, true, false, false)]
+        [InlineData(false, false, true, false)]
+        [InlineData(false, false, false, true)]
+        public void AnyStageOfTheIntroIsActive(bool queued, bool showing, bool carrying, bool playerInIntro)
+        {
+            Assert.True(PlayerModes.IntroActive(queued, showing, carrying, playerInIntro));
+        }
+
+        [Fact]
+        public void NoStageMeansNoIntro()
+        {
+            Assert.False(PlayerModes.IntroActive(false, false, false, false));
+        }
+
+        /// <summary>
+        /// The failure this guards against: the skip asks for a respawn on a
+        /// later frame, and the player from before the skip still stands in
+        /// the world meanwhile. Reporting it would hand the caller a player
+        /// that is about to be destroyed.
+        /// </summary>
+        [Fact]
+        public void TheOldPlayerIsNotTheRespawnedOne()
+        {
+            Assert.False(PlayerModes.IntroSkipSettled(playerSpawned: true, respawnedSinceSkip: false, waitingForRespawn: false, introActive: false));
+            Assert.Equal("the player has not respawned", PlayerModes.IntroSkipPending(true, false, false, false));
+        }
+
+        [Theory]
+        [InlineData(false, true, false, false, "the player has not respawned")]
+        [InlineData(true, true, true, false, "the player has not respawned")]
+        [InlineData(true, true, false, true, "the intro is still active")]
+        [InlineData(false, false, true, true, "the intro is still active")]
+        public void ASkipWaitsForTheRespawnAndTheIntroToEnd(bool spawned, bool respawned, bool waiting, bool introActive, string pending)
+        {
+            Assert.False(PlayerModes.IntroSkipSettled(spawned, respawned, waiting, introActive));
+            Assert.Equal(pending, PlayerModes.IntroSkipPending(spawned, respawned, waiting, introActive));
+        }
+
+        [Fact]
+        public void ANewPlayerOnTheGroundWithNoIntroIsSettled()
+        {
+            Assert.True(PlayerModes.IntroSkipSettled(playerSpawned: true, respawnedSinceSkip: true, waitingForRespawn: false, introActive: false));
         }
 
         [Fact]

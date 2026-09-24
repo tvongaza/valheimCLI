@@ -13,7 +13,7 @@ namespace valheimCLI
         Cooldown,
         /// <summary>This peer does not own the character, so the game forwarded the request to the owner.</summary>
         Forwarded,
-        /// <summary>Not offered: the first-spawn intro is running and the valkyrie carries the player.</summary>
+        /// <summary>Not offered: the first-spawn intro is running and the valkyrie carries the player (cli_skip_intro ends it).</summary>
         Intro,
         /// <summary>Not offered: the player is attached (seat, bed, ship's helm, saddle) and the attachment holds it in place.</summary>
         Attached,
@@ -129,7 +129,7 @@ namespace valheimCLI
                 case TeleportAnswer.Forwarded:
                     return "this peer does not own the character; the request was forwarded to its owner";
                 case TeleportAnswer.Intro:
-                    return "the first-spawn intro is in progress; the valkyrie holds the player until it drops them";
+                    return "the first-spawn intro is in progress; the valkyrie holds the player until it drops them (cli_skip_intro ends it)";
                 case TeleportAnswer.Attached:
                     return "the player is attached (seat, bed, helm or saddle) and would be held in place";
                 case TeleportAnswer.Dead:
@@ -196,6 +196,39 @@ namespace valheimCLI
         /// never settled, and a script should be able to tell them apart.
         /// </summary>
         public static string ArriveTimeoutCode(bool everAccepted) => everAccepted ? "arrive_timeout" : "teleport_refused";
+
+        /// <summary>
+        /// Whether any part of the first-spawn intro is still ahead or under
+        /// way: queued (the game shows it once the start area is nearly
+        /// generated), its text showing, the valkyrie carrying the player, or
+        /// the player still flagged as in the intro.
+        /// </summary>
+        public static bool IntroActive(bool queued, bool showing, bool valkyrieCarrying, bool playerInIntro) =>
+            queued || showing || valkyrieCarrying || playerInIntro;
+
+        /// <summary>
+        /// Whether cli_skip_intro can report the player free. Skipping asks the
+        /// game to respawn the player, which happens on a later frame: until a
+        /// new player stands in the world (the one from before the skip is
+        /// destroyed), the old one still reads as spawned. A player that was
+        /// never replaced because nothing was skipped counts as respawned.
+        /// </summary>
+        public static bool IntroSkipSettled(bool playerSpawned, bool respawnedSinceSkip, bool waitingForRespawn, bool introActive) =>
+            playerSpawned && respawnedSinceSkip && !waitingForRespawn && !introActive;
+
+        /// <summary>What cli_skip_intro is still waiting for, for its timeout line.</summary>
+        public static string IntroSkipPending(bool playerSpawned, bool respawnedSinceSkip, bool waitingForRespawn, bool introActive)
+        {
+            if (introActive)
+            {
+                return "the intro is still active";
+            }
+            if (!playerSpawned || !respawnedSinceSkip || waitingForRespawn)
+            {
+                return "the player has not respawned";
+            }
+            return "nothing";
+        }
 
         public const string FlyUsage = "Usage: cli_fly [on|off|toggle]";
 

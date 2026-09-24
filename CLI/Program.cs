@@ -682,6 +682,8 @@ class Program
         Console.WriteLine("                                           Launch and auto-join server");
         Console.WriteLine("  valheim-cli wait --for terminal --timeout 120s");
         Console.WriteLine("  valheim-cli join --server 127.0.0.1:2456 --password-file ./password.txt --character Test");
+        Console.WriteLine("  valheim-cli join --server 127.0.0.1:2456 --character NewTest --create-character --skip-intro");
+        Console.WriteLine("                                           Create a character that lands without the valkyrie intro");
         Console.WriteLine("  valheim-cli commands --group cli --json");
         Console.WriteLine();
         Console.WriteLine("Interactive commands:");
@@ -797,8 +799,13 @@ class Program
 
         string? character = GetOption(args, "--character");
         bool createCharacter = args.Any(arg => arg.Equals("--create-character", StringComparison.OrdinalIgnoreCase));
+        bool skipIntro = args.Any(arg => arg.Equals("--skip-intro", StringComparison.OrdinalIgnoreCase));
+        if (skipIntro && !createCharacter)
+        {
+            return PrintBadInput("join --skip-intro applies to a character it creates (--create-character); for an existing one run cli_skip_intro after joining");
+        }
         GameLauncher launcher = new GameLauncher(_gamePath, _host, _port, _connect, ReadPassword());
-        JoinResult result = await launcher.JoinDirectAsync(server, ReadPassword(), character, createCharacter, _timeout, _interval);
+        JoinResult result = await launcher.JoinDirectAsync(server, ReadPassword(), character, createCharacter, _timeout, _interval, skipIntro: skipIntro);
 
         if (_json)
         {
