@@ -214,11 +214,16 @@ public class StaticMemberCallTests
     private sealed class FakeAssembly : Assembly
     {
         private readonly Func<Type[]> _types;
+        private readonly string _name;
 
-        public FakeAssembly(Func<Type[]> types) => _types = types;
+        public FakeAssembly(Func<Type[]> types, string name = "Fake")
+        {
+            _types = types;
+            _name = name;
+        }
 
         public override Type[] GetTypes() => _types();
-        public override AssemblyName GetName() => new AssemblyName("Fake");
+        public override AssemblyName GetName() => new AssemblyName(_name);
     }
 
     /// <summary>A type that throws when inspected, as one with a missing dependency does.</summary>
@@ -282,6 +287,123 @@ public class StaticMemberCallTests
         Assert.Equal("no_member", ErrorCode(missing));
         Assert.Equal(StaticMemberCall.MaxListed, missing.Count(l => l.StartsWith("  type: ", StringComparison.Ordinal)));
         Assert.Equal("  ... 3 more", missing[^1]);
+    }
+
+    // ------------------------------------- a mod reloaded in place
+
+    /// <summary>A fixture type as defined again by a reloaded copy of its assembly.</summary>
+    private sealed class CopiedType : TypeDelegator
+    {
+        private readonly Assembly _assembly;
+
+        public CopiedType(Type shape, Assembly assembly) : base(shape) => _assembly = assembly;
+
+        public override Assembly Assembly => _assembly;
+    }
+
+    /// <summary>
+    /// Assemblies "Mod-1".."Mod-n" in load order, each defining its own copy
+    /// of the given types, as a script engine's reloads leave them.
+    /// </summary>
+    private static FakeAssembly[] Reloads(int count, params Type[] shapes)
+    {
+        FakeAssembly[] assemblies = new FakeAssembly[count];
+        for (int i = 0; i < count; i++)
+        {
+            int n = i;
+            assemblies[n] = new FakeAssembly(() => shapes.Select(t => (Type)new CopiedType(t, assemblies[n])).ToArray(), "Mod-" + (n + 1));
+        }
+        return assemblies;
+    }
+
+    private static List<string> RunOn(IEnumerable<Assembly> assemblies, string line, params Assembly[] live)
+    {
+        List<string> output = new List<string>();
+        StaticMemberCall.Run(new StaticMemberCall.TypeIndex(assemblies), line, output.Add, null, () => live);
+        return output;
+    }
+
+    [Fact]
+    public void AReloadedTypeIsNotAmbiguousTheLastLoadedCopyIsCalled()
+    {
+        List<string> output = RunOn(Reloads(2, typeof(Diagnostics)), "Diagnostics.Label");
+        Assert.Equal(new[]
+        {
+            "VALUE \"diagnostics\"",
+            "OK: CALL CallFixtures.Diagnostics.Label kind=field type=string assembly=Mod-2 stale_copies=1 chosen=newest",
+        }, output);
+    }
+
+    [Fact]
+    public void TheCopyWhoseAssemblyHoldsARunningPluginWinsOverNewerOnes()
+    {
+        FakeAssembly[] reloads = Reloads(3, typeof(Diagnostics));
+        Assert.EndsWith(" assembly=Mod-1 stale_copies=2 chosen=live", RunOn(reloads, "Diagnostics.Label", reloads[0])[^1]);
+        // Several live copies: the newest of those.
+        Assert.EndsWith(" assembly=Mod-2 stale_copies=2 chosen=live", RunOn(reloads, "Diagnostics.Label", reloads[0], reloads[1])[^1]);
+    }
+
+    [Fact]
+    public void RunningPluginsAreLookedUpOnlyWhenATypeHasCopies()
+    {
+        int asked = 0;
+        List<string> output = new List<string>();
+        StaticMemberCall.Run(Index, "Diagnostics.Label", output.Add, null, () => { asked++; return new List<Assembly>(); });
+        Assert.Equal(0, asked);
+        Assert.Equal("OK: CALL CallFixtures.Diagnostics.Label kind=field type=string", output[^1]);
+
+        StaticMemberCall.Run(new StaticMemberCall.TypeIndex(Reloads(2, typeof(Diagnostics))), "Diagnostics.Label", output.Add, null,
+            () => { asked++; return new List<Assembly>(); });
+        Assert.Equal(1, asked);
+    }
+
+    [Fact]
+    public void DifferentFullNamesStayAmbiguousAndCopiesAreCountedNotListed()
+    {
+        List<string> output = RunOn(Reloads(2, typeof(CallFixtures.Alpha.Probe), typeof(CallFixtures.Beta.Probe)), "Probe.Shared");
+        Assert.Equal("ambiguous_type", ErrorCode(output));
+        Assert.Contains("2 loaded types named Probe have a static Shared", output[0]);
+        Assert.Equal(new[]
+        {
+            "  candidate: CallFixtures.Alpha.Probe.Shared (Mod-2) and 1 older copies",
+            "  candidate: CallFixtures.Beta.Probe.Shared (Mod-2) and 1 older copies",
+        }, output.Skip(1));
+    }
+
+    [Fact]
+    public void AMissingMemberOnAReloadedTypeListsItsMembersOnce()
+    {
+        List<string> output = RunOn(Reloads(2, typeof(Small)), "Small.E");
+        Assert.Equal("no_member", ErrorCode(output));
+        Assert.Contains("CallFixtures.Small has no static field, property or method named E", output[0]);
+        Assert.Contains("  static members: A C D b", output);
+    }
+
+    [Fact]
+    public void AssemblyChoosesACopyOrATypeByTheStartOfItsAssemblyName()
+    {
+        FakeAssembly[] reloads = Reloads(2, typeof(Diagnostics));
+        Assert.Equal("OK: CALL CallFixtures.Diagnostics.Label kind=field type=string",
+            RunOn(reloads, "--assembly mod-1 Diagnostics.Label")[^1]);
+
+        List<string> none = RunOn(reloads, "--assembly Other Diagnostics.Label");
+        Assert.Equal("no_type", ErrorCode(none));
+        Assert.Contains("no loaded type named Diagnostics in an assembly whose name starts with Other", none[0]);
+        Assert.Equal(new[] { "  found in: Mod-1", "  found in: Mod-2" }, none.Skip(1));
+
+        List<string> assembly = Run("--assembly");
+        Assert.Equal("bad_request", ErrorCode(assembly));
+        Assert.Contains("--assembly takes the start of an assembly name", assembly[0]);
+    }
+
+    [Fact]
+    public void TheIndexKnowsTheLoadOrder()
+    {
+        FakeAssembly[] reloads = Reloads(2, typeof(Diagnostics));
+        StaticMemberCall.TypeIndex index = new StaticMemberCall.TypeIndex(reloads);
+        Assert.Equal(0, index.LoadOrder(reloads[0]));
+        Assert.Equal(1, index.LoadOrder(reloads[1]));
+        Assert.Equal(-1, index.LoadOrder(typeof(Diagnostics).Assembly));
     }
 
     [Fact]

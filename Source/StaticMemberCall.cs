@@ -14,7 +14,7 @@ namespace valheimCLI
     /// returns. A mod developer asks the mod itself a question from a script
     /// instead of adding a console command for each question.
     ///
-    ///   cli_call [--limit N] &lt;[Namespace.]Type.Member&gt; [arg ...]
+    ///   cli_call [--limit N] [--assembly NAME] &lt;[Namespace.]Type.Member&gt; [arg ...]
     ///
     /// Plain .NET, no Unity: the console command only hands this class the
     /// line and the loaded assemblies, so resolution, overload choice,
@@ -34,7 +34,7 @@ namespace valheimCLI
     /// </summary>
     public static class StaticMemberCall
     {
-        public const string Usage = "Usage: cli_call [--limit N] <[Namespace.]Type.Member> [arg ...]";
+        public const string Usage = "Usage: cli_call [--limit N] [--assembly NAME] <[Namespace.]Type.Member> [arg ...]";
         public const int DefaultItemLimit = 50;
         public const int MaxItemLimit = 10000;
         /// <summary>Candidates or members listed under an error before the rest are only counted.</summary>
@@ -64,16 +64,19 @@ namespace valheimCLI
 
         public sealed class Request
         {
-            public Request(string path, List<Token> arguments, int itemLimit)
+            public Request(string path, List<Token> arguments, int itemLimit, string? assemblyPrefix = null)
             {
                 Path = path;
                 Arguments = arguments;
                 ItemLimit = itemLimit;
+                AssemblyPrefix = assemblyPrefix;
             }
 
             public string Path { get; }
             public List<Token> Arguments { get; }
             public int ItemLimit { get; }
+            /// <summary>--assembly: only types from assemblies whose name starts with this (any case).</summary>
+            public string? AssemblyPrefix { get; }
         }
 
         /// <summary>
@@ -152,18 +155,31 @@ namespace valheimCLI
                 return false;
             }
             int limit = DefaultItemLimit;
+            string? assemblyPrefix = null;
             int next = 0;
             while (next < tokens.Count && !tokens[next].Quoted && tokens[next].Text.StartsWith("--", StringComparison.Ordinal))
             {
                 string option = tokens[next].Text;
-                if (option != "--limit")
+                if (option == "--limit")
                 {
-                    error = "unknown option " + option + "; the only option is --limit N, before the member";
-                    return false;
+                    if (next + 1 >= tokens.Count || !int.TryParse(tokens[next + 1].Text, NumberStyles.None, Inv, out limit) || limit > MaxItemLimit)
+                    {
+                        error = "--limit takes a whole number from 0 to " + MaxItemLimit.ToString(Inv);
+                        return false;
+                    }
                 }
-                if (next + 1 >= tokens.Count || !int.TryParse(tokens[next + 1].Text, NumberStyles.None, Inv, out limit) || limit > MaxItemLimit)
+                else if (option == "--assembly")
                 {
-                    error = "--limit takes a whole number from 0 to " + MaxItemLimit.ToString(Inv);
+                    if (next + 1 >= tokens.Count || tokens[next + 1].Text.Length == 0)
+                    {
+                        error = "--assembly takes the start of an assembly name";
+                        return false;
+                    }
+                    assemblyPrefix = tokens[next + 1].Text;
+                }
+                else
+                {
+                    error = "unknown option " + option + "; the options are --limit N and --assembly NAME, before the member";
                     return false;
                 }
                 next += 2;
@@ -173,7 +189,7 @@ namespace valheimCLI
                 error = "";
                 return false;
             }
-            request = new Request(tokens[next].Text, tokens.Skip(next + 1).ToList(), limit);
+            request = new Request(tokens[next].Text, tokens.Skip(next + 1).ToList(), limit, assemblyPrefix);
             return true;
         }
 
@@ -192,12 +208,15 @@ namespace valheimCLI
         {
             private readonly Dictionary<string, List<Type>> _byName =
                 new Dictionary<string, List<Type>>(StringComparer.OrdinalIgnoreCase);
+            private readonly Dictionary<Assembly, int> _loadOrder = new Dictionary<Assembly, int>();
 
+            /// <param name="assemblies">in load order, as AppDomain.GetAssemblies lists them</param>
             public TypeIndex(IEnumerable<Assembly> assemblies)
             {
                 int count = 0;
                 foreach (Assembly assembly in assemblies)
                 {
+                    _loadOrder[assembly] = count;
                     count++;
                     foreach (Type type in LoadableTypes(assembly))
                     {
@@ -218,6 +237,9 @@ namespace valheimCLI
 
             /// <summary>How many assemblies it was built from; a cache compares this to decide whether to rebuild.</summary>
             public int AssemblyCount { get; }
+
+            /// <summary>An assembly's position in the load order (later is newer), or -1 if it was not indexed.</summary>
+            public int LoadOrder(Assembly assembly) => _loadOrder.TryGetValue(assembly, out int order) ? order : -1;
 
             /// <summary>
             /// Types whose dotted full name (nested types joined with '.')
@@ -325,17 +347,74 @@ namespace valheimCLI
 
         public sealed class Resolution
         {
-            public Resolution(Type type, string memberName, MemberInfo[] members)
+            public Resolution(Type type, string memberName, MemberInfo[] members, Copies copies)
             {
                 Type = type;
                 MemberName = memberName;
                 Members = members;
+                Copies = copies;
             }
 
             public Type Type { get; }
             public string MemberName { get; }
             public MemberInfo[] Members { get; }
+            /// <summary>Which copy of the type was chosen when several assemblies hold the same full name.</summary>
+            public Copies Copies { get; }
         }
+
+        /// <summary>
+        /// One full type name and the copy of it that is called. A mod that is
+        /// reloaded in place (a script engine, a hot-reload tool) loads a new
+        /// assembly under a new name, and the runtime never unloads the old
+        /// one, so the same full name is then defined once per reload. Those
+        /// are copies of one type, not a choice for the user to make: the live
+        /// copy is used, which is the one whose assembly holds a running plugin
+        /// or, when no copy does, the one loaded last.
+        /// </summary>
+        public sealed class Copies
+        {
+            public Copies(Type chosen, int stale, string chosenBy)
+            {
+                Chosen = chosen;
+                Stale = stale;
+                ChosenBy = chosenBy;
+            }
+
+            public Type Chosen { get; }
+            /// <summary>How many other copies were passed over.</summary>
+            public int Stale { get; }
+            /// <summary>"only", "live" (its assembly holds a running plugin) or "newest" (loaded last).</summary>
+            public string ChosenBy { get; }
+        }
+
+        /// <summary>
+        /// Group types by full name and choose one copy per name: among the
+        /// copies whose assembly is live, else among all, the one loaded last.
+        /// <paramref name="liveAssemblies"/> is asked only when a name has
+        /// more than one copy.
+        /// </summary>
+        public static List<Copies> ChooseCopies(TypeIndex index, IEnumerable<Type> types, Func<ICollection<Assembly>>? liveAssemblies)
+        {
+            ICollection<Assembly>? live = null;
+            List<Copies> chosen = new List<Copies>();
+            foreach (IGrouping<string, Type> sameName in types.GroupBy(DottedName, StringComparer.Ordinal))
+            {
+                List<Type> copies = sameName.ToList();
+                if (copies.Count == 1)
+                {
+                    chosen.Add(new Copies(copies[0], 0, "only"));
+                    continue;
+                }
+                live ??= liveAssemblies?.Invoke() ?? new List<Assembly>();
+                List<Type> liveCopies = copies.Where(t => live.Contains(t.Assembly)).ToList();
+                List<Type> pool = liveCopies.Count > 0 ? liveCopies : copies;
+                Type newest = pool.OrderByDescending(t => index.LoadOrder(t.Assembly)).First();
+                chosen.Add(new Copies(newest, copies.Count - 1, liveCopies.Count > 0 ? "live" : "newest"));
+            }
+            return chosen;
+        }
+
+        private static string AssemblyName(Type t) => t.Assembly.GetName().Name ?? "";
 
         /// <summary>
         /// Find the one type that the path names and that has a static member
@@ -346,8 +425,12 @@ namespace valheimCLI
         /// MyMod.ZNet. Otherwise more than one match is ambiguous and every
         /// candidate is listed, with its assembly, to be named in full.
         /// Names are case-sensitive; a near miss in case is suggested.
+        /// Copies of one full name in several assemblies are not ambiguous;
+        /// see <see cref="Copies"/>. <paramref name="assemblyPrefix"/> keeps
+        /// only types from assemblies whose name starts with it (any case).
         /// </summary>
-        public static bool TryResolve(TypeIndex index, string path, out Resolution? resolution, out Failure? failure)
+        public static bool TryResolve(TypeIndex index, string path, out Resolution? resolution, out Failure? failure,
+            Func<ICollection<Assembly>>? liveAssemblies = null, string? assemblyPrefix = null)
         {
             resolution = null;
             failure = null;
@@ -363,6 +446,17 @@ namespace valheimCLI
             string memberName = path.Substring(dot + 1);
 
             List<Type> named = index.Find(typeName);
+            if (assemblyPrefix != null)
+            {
+                List<Type> inAssembly = named.Where(t => AssemblyName(t).StartsWith(assemblyPrefix, StringComparison.OrdinalIgnoreCase)).ToList();
+                if (named.Count > 0 && inAssembly.Count == 0)
+                {
+                    failure = new Failure("no_type", "no loaded type named " + typeName + " in an assembly whose name starts with " + assemblyPrefix,
+                        named.Select(AssemblyName).Distinct().Take(MaxListed).Select(a => "found in: " + a).ToList());
+                    return false;
+                }
+                named = inAssembly;
+            }
             if (named.Count == 0)
             {
                 List<string> details = new List<string>();
@@ -387,24 +481,27 @@ namespace valheimCLI
                 withMember = named.Where(t => HasStaticMember(t, memberName)).ToList();
             }
 
-            if (withMember.Count > 1)
+            List<Copies> distinct = ChooseCopies(index, withMember, liveAssemblies);
+            if (distinct.Count > 1)
             {
-                List<string> details = withMember.Take(MaxListed)
-                    .Select(t => "candidate: " + DottedName(t) + "." + memberName + " (" + t.Assembly.GetName().Name + ")").ToList();
-                AddOmitted(details, withMember.Count);
+                List<string> details = distinct.Take(MaxListed)
+                    .Select(c => "candidate: " + DottedName(c.Chosen) + "." + memberName + " (" + AssemblyName(c.Chosen) + ")" +
+                                 (c.Stale > 0 ? " and " + c.Stale.ToString(Inv) + " older copies" : "")).ToList();
+                AddOmitted(details, distinct.Count);
                 failure = new Failure("ambiguous_type",
-                    withMember.Count.ToString(Inv) + " loaded types named " + typeName + " have a static " + memberName + "; give more of the namespace",
+                    distinct.Count.ToString(Inv) + " loaded types named " + typeName + " have a static " + memberName + "; give more of the namespace",
                     details);
                 return false;
             }
-            if (withMember.Count == 0)
+            if (distinct.Count == 0)
             {
-                failure = NoMember(exact.Count > 0 ? exact : named, typeName, memberName);
+                List<Type> types = exact.Count > 0 ? exact : named;
+                failure = NoMember(ChooseCopies(index, types, liveAssemblies).Select(c => c.Chosen).ToList(), typeName, memberName);
                 return false;
             }
 
-            Type type = withMember[0];
-            resolution = new Resolution(type, memberName, type.GetMember(memberName, StaticMembers));
+            Copies copy = distinct[0];
+            resolution = new Resolution(copy.Chosen, memberName, copy.Chosen.GetMember(memberName, StaticMembers), copy);
             return true;
         }
 
@@ -427,7 +524,7 @@ namespace valheimCLI
             List<string> details = new List<string>();
             if (types.Count > 1)
             {
-                details.AddRange(types.Take(MaxListed).Select(t => "type: " + DottedName(t) + " (" + t.Assembly.GetName().Name + ")"));
+                details.AddRange(types.Take(MaxListed).Select(t => "type: " + DottedName(t) + " (" + AssemblyName(t) + ")"));
                 AddOmitted(details, types.Count);
                 return new Failure("no_member", "none of the " + types.Count.ToString(Inv) + " loaded types named " + typeName + " has a static member " + memberName, details);
             }
@@ -653,9 +750,12 @@ namespace valheimCLI
         /// Run one cli_call line against the given types and write its output.
         /// <paramref name="onThrow"/> receives the full exception when the
         /// target throws, for the plugin to log with its stack trace; the
-        /// console gets the type and message.
+        /// console gets the type and message. <paramref name="liveAssemblies"/>
+        /// lists the assemblies that hold a running plugin; it is asked only
+        /// when a type has copies in several assemblies (see <see cref="Copies"/>).
         /// </summary>
-        public static void Run(TypeIndex index, string line, Action<string> output, Action<string, Exception>? onThrow = null)
+        public static void Run(TypeIndex index, string line, Action<string> output, Action<string, Exception>? onThrow = null,
+            Func<ICollection<Assembly>>? liveAssemblies = null)
         {
             if (!TryParseRequest(line, out Request? request, out string error))
             {
@@ -666,7 +766,7 @@ namespace valheimCLI
                 output(Usage);
                 return;
             }
-            if (!TryResolve(index, request!.Path, out Resolution? resolution, out Failure? failure))
+            if (!TryResolve(index, request!.Path, out Resolution? resolution, out Failure? failure, liveAssemblies, request.AssemblyPrefix))
             {
                 Emit(failure!, output);
                 return;
@@ -764,7 +864,10 @@ namespace valheimCLI
                     }
                 }
             }
-            output("OK: CALL " + target + " " + header + " type=" + CallValues.FriendlyName(resultType) + summary);
+            string copies = resolution.Copies.Stale > 0
+                ? " assembly=" + AssemblyName(type) + " stale_copies=" + resolution.Copies.Stale.ToString(Inv) + " chosen=" + resolution.Copies.ChosenBy
+                : "";
+            output("OK: CALL " + target + " " + header + " type=" + CallValues.FriendlyName(resultType) + summary + copies);
         }
 
         /// <summary>

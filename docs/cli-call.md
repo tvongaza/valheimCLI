@@ -6,8 +6,12 @@ through a static diagnostic method once; scripts then ask for it by name,
 without a console command for every question.
 
 ```text
-cli_call [--limit N] <[Namespace.]Type.Member> [arg ...]
+cli_call [--limit N] [--assembly NAME] <[Namespace.]Type.Member> [arg ...]
 ```
+
+Options come before the member: `--limit N` bounds how many items of a
+collection are printed (default 50), `--assembly NAME` looks only in
+assemblies whose name starts with `NAME` (any case).
 
 ```bash
 valheim-cli devcommands                                  # cli_call is cheat-gated
@@ -62,6 +66,36 @@ case is suggested.
 - Static members inherited from a base class are found. Open generic types
   and generic methods are not callable (there is no way to give the type
   argument).
+- The same full name defined in several assemblies is one type loaded more
+  than once, not an ambiguity; see below.
+
+### A mod reloaded in place
+
+A script engine or hot-reload tool loads a new copy of a mod's assembly on
+every reload, under a new name (`MyMod-<ticks>`), and the runtime never
+unloads the old copies. Every type of the mod then exists once per reload,
+with the same full name. `cli_call` calls one copy:
+
+1. the copy whose assembly holds a running plugin (an entry in BepInEx's
+   plugin table whose instance still exists, or a plugin component in the
+   scene; a reload destroys the old instance), the newest of them if several
+   do;
+2. otherwise the copy loaded last.
+
+The `OK:` line then names the copy and how many were passed over:
+
+```text
+VALUE "MyMod"
+OK: CALL MyMod.Plugin.ModName kind=constant type=string assembly=MyMod-639258367862848272 stale_copies=1 chosen=live
+```
+
+`chosen=newest` means no copy holds a running plugin (a helper assembly with
+no plugin in it) and load order decided. To read an older copy on purpose,
+name its assembly: `cli_call --assembly MyMod-639258316676507905 MyMod.Plugin.ModName`.
+Two types with different full names still make `ambiguous_type`; each
+candidate is listed once, with the number of older copies. Unrelated mods
+that define the very same full name are treated as copies too; the
+`assembly=` field shows which one answered, and `--assembly` picks the other.
 
 ## Arguments
 
@@ -107,7 +141,7 @@ used: `overload=(Vector3,Vector3)`.
 | `ITEM <i> <text>` | one per item, when the result is a collection or sequence |
 | `MORE ...` | how many items `--limit` (default 50, at most 10000) left out |
 | `OUT <name>=<text>` | an `out` or `ref` parameter after the call |
-| `OK: CALL <Type.Member> kind=<method\|field\|property\|constant> type=<type>` | always last on success; `items=<n> shown=<m>` for a collection |
+| `OK: CALL <Type.Member> kind=<method\|field\|property\|constant> type=<type>` | always last on success; `items=<n> shown=<m>` for a collection; `assembly=<name> stale_copies=<n> chosen=<live\|newest>` when the type is loaded more than once |
 | `ERROR: code=<code> message=<text>` | the failure; detail lines follow, indented |
 
 Values are printed on one line:
@@ -138,8 +172,8 @@ the returned value says: text such as `usage:` or `timed out` inside a
 
 | Code | Cause |
 | --- | --- |
-| `bad_request` | no `Type.Member`, an unterminated quote, a bad `--limit` |
-| `no_type` | no loaded type has that name (near misses in case are suggested) |
+| `bad_request` | no `Type.Member`, an unterminated quote, a bad `--limit` or `--assembly` |
+| `no_type` | no loaded type has that name (near misses in case are suggested), or none in the assemblies `--assembly` names (the assemblies that do have it are listed) |
 | `ambiguous_type` | several types of that name have the member; candidates listed |
 | `no_member` | the type has no static member of that name; its static members are listed |
 | `no_overload` | no overload takes that many arguments, or none accepts them; overloads listed |
