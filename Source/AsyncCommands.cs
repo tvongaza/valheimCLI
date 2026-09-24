@@ -202,6 +202,33 @@ namespace valheimCLI
             ctx.Output($"CANCELLED: {ctx.Name} {settled}");
         }
 
+        private static readonly System.Reflection.FieldInfo? MaxAirAltitudeField =
+            typeof(Character).GetField("m_maxAirAltitude", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+
+        /// <summary>
+        /// Put a player more than 1 m above the ground down on it, at rest,
+        /// and reset the height the game measures a fall from, so the
+        /// set-down itself is not a fall. False when there was nothing to do.
+        /// </summary>
+        private static bool SetDownOnGround(Player player)
+        {
+            Vector3 p = player.transform.position;
+            if (ZoneSystem.instance == null || !ZoneSystem.instance.GetGroundHeight(p, out float ground) || p.y - ground <= 1f)
+                return false;
+            // The rigidbody carries the character: moving only the transform
+            // was undone by the body on the next physics step, the player fell
+            // from where it was, and the jump back up read as an undone landing.
+            Vector3 down = new Vector3(p.x, ground + 0.3f, p.z);
+            player.transform.position = down;
+            if (player.m_body != null)
+            {
+                player.m_body.position = down;
+                player.m_body.linearVelocity = Vector3.zero;
+            }
+            MaxAirAltitudeField?.SetValue(player, down.y);
+            return true;
+        }
+
         // ---- cli_skip_intro ----
         private static IEnumerator SkipIntro(Context ctx, float timeout)
         {
@@ -272,6 +299,7 @@ namespace valheimCLI
             }
             Stopwatch clock = Stopwatch.StartNew();
             int retries = 0;
+            bool grounded = false;
             // The game refuses a teleport while one is running and for 2 s after
             // one finishes. A refused teleport is offered again every frame until
             // the game takes it; only one the game accepted can bounce.
@@ -331,41 +359,53 @@ namespace valheimCLI
                     answer = TeleportAnswer.Cooldown;
                     continue;
                 }
+                // A target given well above the ground (site files use y=60) would drop the
+                // player: fall damage, a red flash over the next capture, seconds of falling.
+                // The teleport finishes only once the game finds a floor there, so set the
+                // player down on the first landed frame, and forget the height it fell from.
+                if (SetDownOnGround(player))
+                {
+                    grounded = true;
+                    p = player.transform.position;
+                }
                 string zoneLine = "";
                 CustomCommands.ZoneReady(target.x, target.z, radius, line => zoneLine = line);
                 if (zoneLine.Contains("ready=true"))
                 {
-                    // A target given well above the ground (site files use y=60) would drop the
-                    // player: fall damage, a red flash over the next capture, seconds of falling.
-                    // Set the player down once the ground is there.
-                    bool grounded = false;
-                    if (ZoneSystem.instance != null && ZoneSystem.instance.GetGroundHeight(p, out float ground) && p.y - ground > 1f)
-                    {
-                        player.transform.position = new Vector3(p.x, ground + 0.3f, p.z);
-                        if (player.m_body != null)
-                            player.m_body.linearVelocity = Vector3.zero;
-                        p = player.transform.position;
-                        grounded = true;
-                    }
-
                     // A landing counts only if it holds: whatever holds the
                     // player (the intro valkyrie, an attachment) moves it back
                     // within a frame or two, and the position read at the
                     // landing would report a place the player no longer is.
+                    // A straight drop is the landing settling: the hold starts
+                    // again from wherever the player comes to rest.
                     Vector3 landed = p;
                     Stopwatch settle = Stopwatch.StartNew();
                     bool held = true;
-                    while (settle.Elapsed.TotalSeconds < PlayerModes.LandingSettleSeconds && !ctx.Cancelled)
+                    while (settle.Elapsed.TotalSeconds < PlayerModes.LandingSettleSeconds && !ctx.Cancelled && clock.Elapsed.TotalSeconds < timeout)
                     {
                         yield return null;
                         Vector3 now = player.transform.position;
                         float driftX = now.x - landed.x, driftZ = now.z - landed.z;
-                        if (!PlayerModes.LandingHeld(CustomCommands.TeleportBlocker(player), player.IsTeleporting(),
-                                Mathf.Sqrt(driftX * driftX + driftZ * driftZ), now.y - landed.y))
+                        LandingCheck check = PlayerModes.CheckLanding(CustomCommands.TeleportBlocker(player), player.IsTeleporting(),
+                            Mathf.Sqrt(driftX * driftX + driftZ * driftZ), now.y - landed.y);
+                        if (check == LandingCheck.Falling)
+                        {
+                            if (SetDownOnGround(player))
+                                grounded = true;
+                            landed = player.transform.position;
+                            settle.Restart();
+                            continue;
+                        }
+                        if (check == LandingCheck.Undone)
                         {
                             held = false;
                             break;
                         }
+                    }
+                    if (held && settle.Elapsed.TotalSeconds < PlayerModes.LandingSettleSeconds && !ctx.Cancelled)
+                    {
+                        pending = "landing still settling";
+                        break;
                     }
                     if (ctx.Cancelled)
                         break;

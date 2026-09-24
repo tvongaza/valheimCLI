@@ -51,6 +51,17 @@ namespace valheimCLI
         Blocked
     }
 
+    /// <summary>What a landing looks like on a frame of cli_arrive's hold.</summary>
+    public enum LandingCheck
+    {
+        /// <summary>Still where it landed.</summary>
+        Held,
+        /// <summary>Dropping straight down from where it landed (a target above the ground): wait for it to come to rest there.</summary>
+        Falling,
+        /// <summary>Moved sideways or up, teleporting again, or blocked: something undid the landing.</summary>
+        Undone
+    }
+
     /// <summary>
     /// The teleport and player-mode rules, in plain .NET so they can be tested
     /// without the game.
@@ -182,13 +193,28 @@ namespace valheimCLI
         }
 
         /// <summary>
+        /// A declared landing on a later frame. Falling straight down from a
+        /// target above the ground is the landing still settling, not an undo:
+        /// treated as undone, it re-teleported the player to the same height,
+        /// and the repeated falls killed a new character (25 health).
+        /// </summary>
+        public static LandingCheck CheckLanding(TeleportBlock block, bool teleporting, float horizontalDrift, float verticalDrift)
+        {
+            if (block != TeleportBlock.None || teleporting ||
+                horizontalDrift > LandingHorizontalTolerance || verticalDrift > LandingVerticalTolerance)
+            {
+                return LandingCheck.Undone;
+            }
+            return verticalDrift < -LandingVerticalTolerance ? LandingCheck.Falling : LandingCheck.Held;
+        }
+
+        /// <summary>
         /// Whether a declared landing still holds on a later frame: nothing
         /// blocks the player, no teleport runs, and the player is still where
         /// it landed.
         /// </summary>
         public static bool LandingHeld(TeleportBlock block, bool teleporting, float horizontalDrift, float verticalDrift) =>
-            block == TeleportBlock.None && !teleporting &&
-            horizontalDrift <= LandingHorizontalTolerance && Math.Abs(verticalDrift) <= LandingVerticalTolerance;
+            CheckLanding(block, teleporting, horizontalDrift, verticalDrift) == LandingCheck.Held;
 
         /// <summary>
         /// The error code when cli_arrive runs out of time. A teleport the game

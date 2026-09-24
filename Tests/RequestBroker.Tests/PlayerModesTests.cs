@@ -173,6 +173,30 @@ namespace valheimCLI.Tests
             Assert.Equal(ArriveStep.Blocked, PlayerModes.NextArriveStep(TeleportBlock.Attached, accepted, teleporting, atTarget));
         }
 
+        /// <summary>
+        /// Measured in game: a target 7 m above the ground landed, the player
+        /// fell, the fall read as an undone landing, and the teleport was
+        /// offered again; the second fall killed a new character. A straight
+        /// drop settles the landing; it does not undo it.
+        /// </summary>
+        [Fact]
+        public void FallingStraightDownIsNotAnUndoneLanding()
+        {
+            Assert.Equal(LandingCheck.Falling, PlayerModes.CheckLanding(TeleportBlock.None, false, 0.1f, -5.8f));
+            Assert.Equal(LandingCheck.Falling, PlayerModes.CheckLanding(TeleportBlock.None, false, 2f, -1.6f));
+            Assert.Equal(LandingCheck.Held, PlayerModes.CheckLanding(TeleportBlock.None, false, 0f, -1.5f));
+        }
+
+        [Fact]
+        public void AnythingButAStraightDropUndoesTheLanding()
+        {
+            // Up (the valkyrie), sideways (bounced back), teleporting again, or blocked.
+            Assert.Equal(LandingCheck.Undone, PlayerModes.CheckLanding(TeleportBlock.None, false, 0.2f, 170.4f));
+            Assert.Equal(LandingCheck.Undone, PlayerModes.CheckLanding(TeleportBlock.None, false, 2.5f, -6f));
+            Assert.Equal(LandingCheck.Undone, PlayerModes.CheckLanding(TeleportBlock.None, teleporting: true, 0f, -6f));
+            Assert.Equal(LandingCheck.Undone, PlayerModes.CheckLanding(TeleportBlock.Attached, false, 0f, -6f));
+        }
+
         [Fact]
         public void ALandingHoldsOnlyWhereItLanded()
         {
@@ -182,6 +206,7 @@ namespace valheimCLI.Tests
             Assert.False(PlayerModes.LandingHeld(TeleportBlock.None, false, 0.2f, 170.4f));
             Assert.False(PlayerModes.LandingHeld(TeleportBlock.None, false, 2.5f, 0f));
             Assert.False(PlayerModes.LandingHeld(TeleportBlock.None, false, 0f, -1.6f));
+            Assert.False(PlayerModes.LandingHeld(TeleportBlock.None, false, 0f, 1.6f));
             Assert.False(PlayerModes.LandingHeld(TeleportBlock.None, teleporting: true, 0f, 0f));
             Assert.False(PlayerModes.LandingHeld(TeleportBlock.Intro, false, 0f, 0f));
             Assert.Equal(1f, PlayerModes.LandingSettleSeconds);

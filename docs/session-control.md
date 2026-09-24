@@ -215,10 +215,14 @@ leaves it. End the intro with `cli_skip_intro` (below) and stand up before
 arriving.
 
 Otherwise `cli_arrive` offers its teleport every frame until the game accepts
-it, then waits for landing and loaded zones as before. A landing then has to
-hold for 1 s: the player must stay within 2 m horizontally and 1.5 m vertically
-of where it landed, with no teleport running and nothing blocking. A landing
-that is undone in that time is not reported: if a blocking state caused it, the
+it, then waits for landing and loaded zones as before. A player landed more
+than 1 m above the ground is set down on it on the first landed frame, with the
+game's fall height reset, so a target above the ground costs no fall damage
+(`grounded=True` on the reply). A landing then has to hold for 1 s: the player
+must stay within 2 m horizontally and 1.5 m vertically of where it landed, with
+no teleport running and nothing blocking. Dropping straight down is the landing
+settling, not an undo: the hold starts again where the player comes to rest. A
+landing that is undone in that time is not reported: if a blocking state caused it, the
 reply is `ERROR: code=teleport_refused reason=landing undone: …`; otherwise the
 teleport is offered again, like a bounce. The reply adds `acceptedMs`, the time
 until the game accepted, and `heldMs`; `retries` counts bounced or undone
