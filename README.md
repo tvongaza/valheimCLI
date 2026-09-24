@@ -90,6 +90,20 @@ valheim-cli cli_until 30 ready=true road_zone_state 331 -516 64   # poll any com
 valheim-cli cli_capture E-side 347.5 57.5 -522.5 331.1 51.5 -515.6  # pose, wait for zones / heightmap rebuilds / weather, render 2 frames, save, wait for the file
 ```
 
+## Calling Into A Mod
+
+`cli_call` calls a static method, or reads a static field or property, of the
+game or of any loaded mod and prints the result, so a script can ask a mod
+about its state without a console command for each question. It is
+cheat-gated. Resolution, argument syntax and output are described in
+[docs/cli-call.md](docs/cli-call.md); `examples/sample-value.sh` samples one
+member into a CSV time series.
+
+```bash
+valheim-cli cli_call Utils.DistanceXZ 0,0,0 3,100,4
+valheim-cli cli_call --limit 5 MyMod.Diagnostics.PendingJobs
+```
+
 ## Readiness And Exit Codes
 
 `--status` prints a compact agent-readable summary:
