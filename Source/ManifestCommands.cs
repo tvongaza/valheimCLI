@@ -41,6 +41,8 @@ namespace valheimCLI
 
         internal static ConfigEntry<string>? FileConfig;
         internal static ConfigEntry<bool>? StrictConfig;
+        private static ConfigFile? _config;
+        private static readonly FileRefresher ConfigRefresher = new FileRefresher();
         private static readonly StandingExpectations Standing = new StandingExpectations();
 
         /// <summary>
@@ -50,6 +52,38 @@ namespace valheimCLI
         /// location nor a field initialiser can say it.
         /// </summary>
         internal static void RecordOwnLoad(DateTime utc) => _ownLoadUtc = utc;
+
+        /// <summary>
+        /// The plugin's config, as loaded by Awake. The standing check re-reads
+        /// it when the .cfg changed, instead of waiting for a file watcher.
+        /// </summary>
+        internal static void UseConfig(ConfigFile config)
+        {
+            _config = config;
+            ConfigRefresher.Baseline(config.ConfigFilePath);
+        }
+
+        /// <summary>
+        /// Reloads the config when its file changed since the last check, so an
+        /// edit to [Expectations] applies to the very next command (one stat
+        /// per check when nothing changed).
+        /// </summary>
+        private static void RefreshConfig()
+        {
+            ConfigFile? config = _config;
+            if (config == null) return;
+            try
+            {
+                if (ConfigRefresher.RefreshIfChanged(config.ConfigFilePath, config.Reload))
+                    valheimCLIPlugin.Log.LogInfo($"Expectations: config changed, reloaded (strict={Strict()}, file={ConfiguredPath()})");
+            }
+            catch (Exception ex)
+            {
+                valheimCLIPlugin.Log.LogWarning($"Expectations: could not reload {config.ConfigFilePath}: {ex.Message}");
+            }
+        }
+
+        private static bool Strict() => StrictConfig?.Value ?? false;
 
         public static void Register()
         {
@@ -83,15 +117,20 @@ namespace valheimCLI
             bool strict = words.RemoveAll(w => w.Equals("--strict", StringComparison.OrdinalIgnoreCase)) > 0;
             List<string> problems;
             int count;
+            string path = "";
             if (words.Count == 0)
             {
-                string path = ConfiguredPath();
+                // The configured file, as the next command would be checked
+                // against it; the reply names the file and strict value used.
+                RefreshConfig();
+                path = ConfiguredPath();
+                strict |= Strict();
                 if (path.Length == 0)
                 {
-                    output("Usage: cli_expect [--strict] <key>=<value> [...] (or set [Expectations] File to check a file)");
+                    output($"OK: EXPECT off (no [Expectations] File; pass key=value pairs to check them) strict={Lower(strict)} file=");
                     return;
                 }
-                problems = Standing.Problems(path, strict || (StrictConfig?.Value ?? false), Plugins, World);
+                problems = Standing.Problems(path, strict, Plugins, World);
                 count = -1;
             }
             else
@@ -110,14 +149,17 @@ namespace valheimCLI
                 count = expectations.Count;
             }
 
+            string used = count >= 0 ? "" : $" strict={Lower(strict)} file={path}";
             if (problems.Count == 0)
             {
-                output(count >= 0 ? $"OK: EXPECT {count} expectation(s) met{(strict ? " (strict)" : "")}" : $"OK: EXPECT {ConfiguredPath()} holds");
+                output(count >= 0 ? $"OK: EXPECT {count} expectation(s) met{(strict ? " (strict)" : "")}" : $"OK: EXPECT holds{used}");
                 return;
             }
             foreach (string p in problems) output("MISMATCH " + p);
-            output($"ERROR: code=expectation_mismatch mismatches={problems.Count}");
+            output($"ERROR: code=expectation_mismatch mismatches={problems.Count}{used}");
         }
+
+        private static string Lower(bool value) => value ? "true" : "false";
 
         // ---- standing expectations ----
 
@@ -129,7 +171,8 @@ namespace valheimCLI
         /// </summary>
         internal static List<string> StandingProblems()
         {
-            List<string> problems = Standing.Problems(ConfiguredPath(), StrictConfig?.Value ?? false, Plugins, World);
+            RefreshConfig();
+            List<string> problems = Standing.Problems(ConfiguredPath(), Strict(), Plugins, World);
             string? change = Standing.StateChange(problems, out bool isWarning);
             if (change != null)
             {

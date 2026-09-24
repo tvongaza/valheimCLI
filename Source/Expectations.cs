@@ -488,6 +488,66 @@ namespace valheimCLI
         }
     }
 
+    /// <summary>A file's write time and length: enough to notice an edit without reading the file.</summary>
+    public readonly struct FileStamp : IEquatable<FileStamp>
+    {
+        public readonly bool Exists;
+        public readonly DateTime WriteUtc;
+        public readonly long Length;
+
+        public FileStamp(bool exists, DateTime writeUtc, long length)
+        {
+            Exists = exists;
+            WriteUtc = writeUtc;
+            Length = length;
+        }
+
+        public static FileStamp Of(string path)
+        {
+            FileInfo info = new FileInfo(path);
+            return info.Exists ? new FileStamp(true, info.LastWriteTimeUtc, info.Length) : new FileStamp(false, default, -1);
+        }
+
+        public bool Equals(FileStamp other) => Exists == other.Exists && WriteUtc == other.WriteUtc && Length == other.Length;
+        public override bool Equals(object? obj) => obj is FileStamp other && Equals(other);
+        public override int GetHashCode() => WriteUtc.GetHashCode() ^ Length.GetHashCode();
+
+        /// <summary>
+        /// Whether a file must be read again: it was never read, or its write
+        /// time or length differs from when it was.
+        /// </summary>
+        public static bool NeedsReload(FileStamp? last, FileStamp now) => last == null || !last.Value.Equals(now);
+    }
+
+    /// <summary>
+    /// Re-reads a settings file when it changed since the last look, so an
+    /// edit applies to the very next check. A file-system watcher reports
+    /// changes late, on another thread, and can miss them; one stat per check
+    /// cannot.
+    /// </summary>
+    public sealed class FileRefresher
+    {
+        private FileStamp? _last;
+
+        /// <summary>Takes the file as already read (after it was loaded at startup).</summary>
+        public void Baseline(string path) => _last = FileStamp.Of(path);
+
+        /// <summary>
+        /// Calls <paramref name="reload"/> when the file exists and changed
+        /// since the last call or baseline. The stamp is recorded even when the
+        /// reload throws, so a broken file is reported once, not per check.
+        /// </summary>
+        public bool RefreshIfChanged(string path, Action reload)
+        {
+            FileStamp now = FileStamp.Of(path);
+            if (!FileStamp.NeedsReload(_last, now)) return false;
+            _last = now;
+            if (!now.Exists) return false;
+            reload();
+            return true;
+        }
+    }
+
     /// <summary>
     /// The standing expectations file: re-read whenever it changes, checked
     /// before every command sent through the CLI except the diagnostics, and
@@ -496,8 +556,7 @@ namespace valheimCLI
     public sealed class StandingExpectations
     {
         private string _path = "";
-        private DateTime _written;
-        private long _length = -1;
+        private FileStamp? _stamp;
         private List<Expectation> _entries = new List<Expectation>();
         private List<string> _errors = new List<string>();
         private string? _lastState;
@@ -533,14 +592,14 @@ namespace valheimCLI
                 _path = "";
                 return new List<string>();
             }
-            if (!File.Exists(path))
+            FileStamp stamp = FileStamp.Of(path);
+            if (!stamp.Exists)
             {
-                _length = -1;
+                _stamp = null;
                 return new List<string> { $"expectations file not found: {path}" };
             }
 
-            FileInfo info = new FileInfo(path);
-            if (path != _path || info.LastWriteTimeUtc != _written || info.Length != _length)
+            if (path != _path || FileStamp.NeedsReload(_stamp, stamp))
             {
                 try
                 {
@@ -550,12 +609,11 @@ namespace valheimCLI
                 }
                 catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
                 {
-                    _length = -1;
+                    _stamp = null;
                     return new List<string> { $"expectations file could not be read: {ex.Message}" };
                 }
                 _path = path;
-                _written = info.LastWriteTimeUtc;
-                _length = info.Length;
+                _stamp = stamp;
             }
 
             List<string> problems = new List<string>(_errors);

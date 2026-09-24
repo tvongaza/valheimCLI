@@ -409,6 +409,77 @@ public class ExpectationsTests
         }
     }
 
+    // ---- settings file refresh ----
+
+    [Fact]
+    public void AStampNeedsAReloadWhenNeverReadOrWhenTimeOrLengthDiffer()
+    {
+        DateTime t = new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        FileStamp read = new FileStamp(true, t, 100);
+        Assert.True(FileStamp.NeedsReload(null, read));
+        Assert.False(FileStamp.NeedsReload(read, new FileStamp(true, t, 100)));
+        Assert.True(FileStamp.NeedsReload(read, new FileStamp(true, t.AddTicks(1), 100)));
+        Assert.True(FileStamp.NeedsReload(read, new FileStamp(true, t, 101)));
+        Assert.True(FileStamp.NeedsReload(read, new FileStamp(false, default, -1)));
+    }
+
+    [Fact]
+    public void AnEditNoWatcherReportedAppliesToTheNextCheck()
+    {
+        string path = Path.Combine(Path.GetTempPath(), "settings-" + Guid.NewGuid().ToString("N") + ".cfg");
+        try
+        {
+            // A settings holder that only changes when told to reload, like a
+            // config file whose watcher never fired.
+            File.WriteAllText(path, "File = pins.txt\n");
+            string loaded = File.ReadAllText(path);
+            int reloads = 0;
+            Action reload = () => { loaded = File.ReadAllText(path); reloads++; };
+            FileRefresher refresher = new FileRefresher();
+            refresher.Baseline(path);
+
+            Assert.False(refresher.RefreshIfChanged(path, reload));
+            Assert.Equal(0, reloads);
+
+            File.WriteAllText(path, "File = nope.txt\nStrict = true\n");
+            Assert.True(refresher.RefreshIfChanged(path, reload));
+            Assert.Equal("File = nope.txt\nStrict = true\n", loaded);
+            Assert.False(refresher.RefreshIfChanged(path, reload));   // one reload per edit
+            Assert.Equal(1, reloads);
+
+            // Same length, new content: the write time still tells.
+            File.WriteAllText(path, "File = nope.txt\nStrict = fals\n");
+            File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddSeconds(5));
+            Assert.True(refresher.RefreshIfChanged(path, reload));
+            Assert.EndsWith("fals\n", loaded);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void AMissingOrBrokenSettingsFileIsNotReloadedOnEveryCheck()
+    {
+        string path = Path.Combine(Path.GetTempPath(), "settings-" + Guid.NewGuid().ToString("N") + ".cfg");
+        FileRefresher refresher = new FileRefresher();
+        int calls = 0;
+        Assert.False(refresher.RefreshIfChanged(path, () => calls++));
+        Assert.Equal(0, calls);
+        try
+        {
+            File.WriteAllText(path, "broken");
+            Assert.Throws<InvalidOperationException>(() => refresher.RefreshIfChanged(path, () => { calls++; throw new InvalidOperationException(); }));
+            Assert.False(refresher.RefreshIfChanged(path, () => calls++));
+            Assert.Equal(1, calls);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     [Fact]
     public void StateChangeLogsOncePerChange()
     {

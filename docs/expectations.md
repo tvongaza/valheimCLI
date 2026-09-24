@@ -153,8 +153,16 @@ ERROR: code=expectation_mismatch message=Refused: this game does not match /path
 
 - The diagnostics `cli_manifest`, `cli_world`, `cli_expect`,
   `cli_connection_status` and `help` always run, so the mismatch can be looked
-  into. `cli_expect` with no pairs checks the configured file.
-- The file is read again whenever it changes: a script that restores another
+  into. `cli_expect` with no pairs checks the configured file (and
+  `cli_expect --strict` checks it in strict mode).
+- An edit to `[Expectations] File` or `Strict` in the `.cfg` applies to the
+  very next command: the check looks at the config file's write time and
+  length first and reloads it when either changed, without waiting for
+  BepInEx's file watcher. `cli_expect` with no pairs names what it used, e.g.
+  `OK: EXPECT holds strict=true file=/path/to/BepInEx/config/pins.txt`
+  (`OK: EXPECT off ... file=` when no file is set), so a script can confirm an
+  edit took effect.
+- The expectations file is read again whenever it changes: a script that restores another
   world, or installs a build and restarts the game, rewrites it in place and
   the next command is checked against the new lines. Plugin hashes are cached
   by file write time.

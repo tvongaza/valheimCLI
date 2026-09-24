@@ -46,6 +46,7 @@ namespace valheimCLI
             _autoStartQueuedJoinConfig = Config.Bind("ClientLaunch", "AutoStartQueuedJoin", true, "Automatically start the selected character when Valheim has a queued startup/server join.");
             ManifestCommands.FileConfig = Config.Bind("Expectations", "File", "", "A file of key=value lines naming the plugin builds (and optionally the world) this game must run; see docs/expectations.md. While it does not hold, every command sent through the CLI except the diagnostics (cli_manifest, cli_world, cli_expect) is refused. A relative path is relative to the BepInEx config folder. Empty = off.");
             ManifestCommands.StrictConfig = Config.Bind("Expectations", "Strict", false, "Also require the expectations file to name every loaded plugin (a plugin not listed is a mismatch; list it as name=any if its build does not matter) and, once a world is loaded, to name the world (world= or worlduid=; world=any accepts any).");
+            ManifestCommands.UseConfig(Config);
             if (HasStartupJoinArgument())
             {
                 RequestAutoStartQueuedJoin();
@@ -962,15 +963,26 @@ namespace valheimCLI
         private DateTime _lastReloadTime;
         private const long RELOAD_DELAY = 10000000; // One second
 
+        // Held in a field: a watcher only a local refers to can be collected,
+        // and then it stops raising events.
+        private FileSystemWatcher? _configWatcher;
+
+        /// <summary>
+        /// Reloads the config some time after its file changes. Best effort:
+        /// events arrive on another thread, one within a second of the last
+        /// reload is dropped, and a reload that races the writer fails. Settings
+        /// that must apply to the next command (the [Expectations] entries) are
+        /// re-read by the command path itself; see ManifestCommands.RefreshConfig.
+        /// </summary>
         private void SetupWatcher()
         {
             _lastReloadTime = DateTime.Now;
-            FileSystemWatcher watcher = new(BepInEx.Paths.ConfigPath, ConfigFileName);
-            watcher.Changed += ReadConfigValues;
-            watcher.Created += ReadConfigValues;
-            watcher.Renamed += ReadConfigValues;
-            watcher.IncludeSubdirectories = true;
-            watcher.EnableRaisingEvents = true;
+            _configWatcher = new(BepInEx.Paths.ConfigPath, ConfigFileName);
+            _configWatcher.Changed += ReadConfigValues;
+            _configWatcher.Created += ReadConfigValues;
+            _configWatcher.Renamed += ReadConfigValues;
+            _configWatcher.IncludeSubdirectories = true;
+            _configWatcher.EnableRaisingEvents = true;
         }
 
         private void ReadConfigValues(object sender, FileSystemEventArgs e)
