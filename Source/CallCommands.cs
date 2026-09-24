@@ -23,7 +23,7 @@ namespace valheimCLI
 
         public static void Register()
         {
-            new Terminal.ConsoleCommand("cli_call", "Call a static method, or read a static field or property, of the game or any loaded mod and print the result (non-public members included; Vector3 as x,y,z; strings with spaces in double quotes): cli_call [--limit N] [--assembly NAME] <[Namespace.]Type.Member> [arg ...]", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            new Terminal.ConsoleCommand("cli_call", "Call a static method, or read a static field or property, of the game or any loaded mod and print the result (non-public members included; Type.Member.Member uses a static member's value; @Type.Member passes one as an argument; Vector3 as x,y,z; strings with spaces in double quotes): cli_call [--limit N] [--assembly NAME] <[Namespace.]Type.Member[.Member]> [arg ...]", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
             {
                 StaticMemberCall.Run(Types.For(AppDomain.CurrentDomain.GetAssemblies()), args.ArgsAll, args.Context.AddString,
                     (target, ex) => valheimCLIPlugin.Log.LogWarning($"cli_call {target} threw: {ex}"),

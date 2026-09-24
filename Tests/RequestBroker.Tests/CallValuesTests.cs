@@ -147,6 +147,33 @@ public class CallValuesTests
         Assert.Equal("12", Convert("12", typeof(object)));
     }
 
+    [Fact]
+    public void AnObjectInHandPassesToItsTypeABaseTypeOrAWiderNumber()
+    {
+        Generator gen = new Generator(1);
+        Assert.True(CallValues.TryConvertValue(gen, typeof(Generator), out object? same, out int exact));
+        Assert.Same(gen, same);
+        Assert.Equal(CallValues.Cost.Exact, exact);
+        Assert.True(CallValues.TryConvertValue(new DerivedGenerator(), typeof(Generator), out object? _, out int derived));
+        Assert.Equal(CallValues.Cost.Near, derived);
+        Assert.True(CallValues.TryConvertValue(gen, typeof(object), out object? _, out int boxed));
+        Assert.Equal(CallValues.Cost.Widened, boxed);
+        Assert.True(CallValues.TryConvertValue(3, typeof(double), out object? wider, out int _));
+        Assert.Equal(3.0, wider);
+        Assert.True(CallValues.TryConvertValue(3, typeof(int?), out object? wrapped, out int nullableCost));
+        Assert.Equal(3, wrapped);
+        Assert.Equal(CallValues.Cost.Exact + CallValues.Cost.NullableWrap, nullableCost);
+        Assert.True(CallValues.TryConvertValue(null, typeof(Generator), out object? none, out int _));
+        Assert.Null(none);
+        Assert.True(CallValues.TryConvertValue(gen, typeof(Generator).MakeByRefType(), out object? _, out int _));
+
+        Assert.False(CallValues.TryConvertValue(null, typeof(int), out object? _, out int _));
+        Assert.False(CallValues.TryConvertValue(300L, typeof(byte), out object? _, out int _));
+        Assert.False(CallValues.TryConvertValue("text", typeof(Generator), out object? _, out int _));
+        Assert.False(CallValues.TryConvertValue(gen, typeof(int?), out object? _, out int _));
+        Assert.False(CallValues.TryConvertValue(true, typeof(int), out object? _, out int _));
+    }
+
     // ------------------------------------------------------------- writing
 
     [Fact]

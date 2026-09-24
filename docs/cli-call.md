@@ -3,10 +3,12 @@
 `cli_call` calls a static method, or reads a static field or property, of the
 game or of any loaded mod, and prints what it returns. A mod exposes its state
 through a static diagnostic method once; scripts then ask for it by name,
-without a console command for every question.
+without a console command for every question. It also reaches the members of
+an object a static member holds (a singleton such as `ZNet.instance`), and
+passes such objects as arguments.
 
 ```text
-cli_call [--limit N] [--assembly NAME] <[Namespace.]Type.Member> [arg ...]
+cli_call [--limit N] [--assembly NAME] <[Namespace.]Type.Member[.Member ...]> [arg ...]
 ```
 
 Options come before the member: `--limit N` bounds how many items of a
@@ -21,6 +23,8 @@ valheim-cli cli_call ZoneSystem.GetZone 100,0,-200
 valheim-cli cli_call ZNet.ContainsValidIPv4 '"join 10.1.2.3:2456"'
 valheim-cli cli_call --limit 3 Heightmap.GetAllHeightmaps
 valheim-cli cli_call MyMod.Diagnostics.QueueLength       # your own mod
+valheim-cli cli_call WorldGenerator.instance.GetBiome 531 -134          # a singleton's method
+valheim-cli cli_call MyMod.Terrain.HeightAt 531 -134 @WorldGenerator.instance   # a singleton as an argument
 ```
 
 ```text
@@ -97,6 +101,65 @@ candidate is listed once, with the number of older copies. Unrelated mods
 that define the very same full name are treated as copies too; the
 `assembly=` field shows which one answered, and `--assembly` picks the other.
 
+## Singletons: members of a value, and values as arguments
+
+Much of the game lives in objects that a static field or property holds:
+`ZNet.instance`, `WorldGenerator.instance`, `EnvMan.instance`. Two forms
+reach them.
+
+**Members of a static member's value.** When no static member has the whole
+path, the part before the last dot is read as a value and the last part is
+an instance method, field or property of that value:
+
+```bash
+valheim-cli cli_call ZNet.instance.GetWorldName
+valheim-cli cli_call WorldGenerator.instance.GetBiome 531 -134
+```
+
+```text
+VALUE "MyWorld"
+OK: CALL ZNet.GetWorldName kind=method type=string via=ZNet.instance
+
+VALUE Meadows
+OK: CALL WorldGenerator.GetBiome kind=method overload=(float,float,float,bool) type=Biome via=WorldGenerator.instance
+```
+
+`via=` names the value the member was used on. Overloads are chosen as for a
+static call: `GetBiome 531 -134` fits `GetBiome(float wx, float wy, float
+oceanLevel = 0.02, bool waterAlwaysOcean = false)`, the only overload that
+takes two arguments; `GetBiome 531,0,-134` would pick `GetBiome(Vector3)`.
+Every link before the last is read as a value (a field, a property or a
+method without parameters) and a chain may be longer
+(`WorldGenerator.instance.m_world.m_name`); each link is looked up on the
+runtime type of the value before it, private members and members of base
+classes included. A static member whose full path matches always wins over
+a chain, so a path that worked before keeps its meaning. A null link is
+`ERROR: code=null_target` naming it (`WorldGenerator.instance` is null until
+a world is loaded).
+
+**A member's value as an argument.** An argument written `@Type.Member`
+(the same naming as the target, chains included) is replaced by that
+member's value, which is passed as the object it is:
+
+```bash
+valheim-cli cli_call MyMod.Terrain.HeightAt 531 -134 @WorldGenerator.instance
+```
+
+```text
+VALUE 38.25
+OK: CALL MyMod.Terrain.HeightAt kind=method type=float ref3=WorldGenerator.instance
+```
+
+The value must fit the parameter like any argument: an object of the
+parameter's type or of a type derived from it, null for a reference or
+nullable parameter, or a number for a wider numeric parameter. It also takes
+part in overload choice (an exact type is preferred to a base type, and both
+to `object`). `refN=` on the `OK:` line names what argument N was read from.
+If the reference cannot be read, the error is the one the target would give,
+prefixed with the argument: `argument 3 (@WorldGenerator.instanc): ...`. To
+pass text that starts with `@`, write `@@` (`@@home` is the string `@home`)
+or quote it.
+
 ## Arguments
 
 Arguments are separated by spaces. Put a string that contains spaces in
@@ -115,6 +178,7 @@ the game, so protect them from your shell: `'"two words"'`.
 | `char` | a single character |
 | nullable, class, interface | `null` (unquoted); `"null"` is the four-letter string |
 | `object` | the text, as a string |
+| any | `@Type.Member`: that member's value (see above) |
 
 A vector is any struct whose public fields are exactly `x, y[, z[, w]]`, all
 numbers. `out` parameters are not given; they are printed after the call, as
@@ -141,7 +205,7 @@ used: `overload=(Vector3,Vector3)`.
 | `ITEM <i> <text>` | one per item, when the result is a collection or sequence |
 | `MORE ...` | how many items `--limit` (default 50, at most 10000) left out |
 | `OUT <name>=<text>` | an `out` or `ref` parameter after the call |
-| `OK: CALL <Type.Member> kind=<method\|field\|property\|constant> type=<type>` | always last on success; `items=<n> shown=<m>` for a collection; `assembly=<name> stale_copies=<n> chosen=<live\|newest>` when the type is loaded more than once |
+| `OK: CALL <Type.Member> kind=<method\|field\|property\|constant> type=<type>` | always last on success; `items=<n> shown=<m>` for a collection; `via=<path>` for a member of a value; `ref<N>=<path>` for each `@` argument; `assembly=<name> stale_copies=<n> chosen=<live\|newest>` when the type is loaded more than once |
 | `ERROR: code=<code> message=<text>` | the failure; detail lines follow, indented |
 
 Values are printed on one line:
@@ -175,11 +239,12 @@ the returned value says: text such as `usage:` or `timed out` inside a
 | `bad_request` | no `Type.Member`, an unterminated quote, a bad `--limit` or `--assembly` |
 | `no_type` | no loaded type has that name (near misses in case are suggested), or none in the assemblies `--assembly` names (the assemblies that do have it are listed) |
 | `ambiguous_type` | several types of that name have the member; candidates listed |
-| `no_member` | the type has no static member of that name; its static members are listed |
+| `no_member` | the type has no static member of that name, or the value has no instance member of that name; its members are listed |
+| `null_target` | a link of a chain is null, so there is no object to use the next member on |
 | `no_overload` | no overload takes that many arguments, or none accepts them; overloads listed |
 | `ambiguous_overload` | several overloads fit equally well; the tied ones listed |
 | `bad_argument` | an argument cannot be read as its parameter, or a field/property was given arguments |
-| `not_callable` | a generic method, a pointer parameter, a write-only property |
+| `not_callable` | a generic method, a pointer parameter, a write-only property, or a method with parameters used as a chain link or `@` value |
 | `call_threw` | the member threw: the exception type and message; a failing static constructor adds its cause. The full stack trace goes to the BepInEx log |
 | `call_failed` | reflection could not make the call |
 
@@ -188,8 +253,12 @@ the returned value says: text such as `usage:` or `timed out` inside a
 - It reads fields and properties; it does not assign them. A property setter
   is a method named `set_Name` and can be called like one; a field cannot be
   written.
-- It reaches static members only. To look at an instance, give your mod a
-  static method that finds it and returns what you want to see.
+- It reaches an instance only through a static member that holds it (or a
+  chain from one). An object nothing static refers to needs a static method
+  in your mod that finds it.
+- A chain link or an `@` value is read without arguments; a method that
+  needs arguments cannot be a link. Reading a link runs its getter or
+  method, as any call does.
 - A `params` array parameter is an ordinary array parameter: it accepts only
   `null`.
 

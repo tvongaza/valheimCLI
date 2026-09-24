@@ -14,7 +14,11 @@ namespace valheimCLI
     /// returns. A mod developer asks the mod itself a question from a script
     /// instead of adding a console command for each question.
     ///
-    ///   cli_call [--limit N] [--assembly NAME] &lt;[Namespace.]Type.Member&gt; [arg ...]
+    ///   cli_call [--limit N] [--assembly NAME] &lt;[Namespace.]Type.Member[.Member]&gt; [arg ...]
+    ///
+    /// The target may also be an instance member of a static member's value
+    /// ("ZNet.instance.GetWorldName"), and an argument written @Type.Member
+    /// passes that member's value ("@WorldGenerator.instance").
     ///
     /// Plain .NET, no Unity: the console command only hands this class the
     /// line and the loaded assemblies, so resolution, overload choice,
@@ -29,12 +33,12 @@ namespace valheimCLI
     ///   ITEM &lt;i&gt; &lt;text&gt;        one per item when the result is a collection
     ///   MORE ...                  how many items --limit left out
     ///   OUT &lt;name&gt;=&lt;text&gt;      each out/ref parameter after the call
-    ///   OK: CALL &lt;Type.Member&gt; kind=... type=...
+    ///   OK: CALL &lt;Type.Member&gt; kind=... type=... [via=...] [refN=...]
     /// or ERROR: code=&lt;code&gt; message=... followed by indented detail lines.
     /// </summary>
     public static class StaticMemberCall
     {
-        public const string Usage = "Usage: cli_call [--limit N] [--assembly NAME] <[Namespace.]Type.Member> [arg ...]";
+        public const string Usage = "Usage: cli_call [--limit N] [--assembly NAME] <[Namespace.]Type.Member[.Member]> [arg or @Type.Member ...]";
         public const int DefaultItemLimit = 50;
         public const int MaxItemLimit = 10000;
         /// <summary>Candidates or members listed under an error before the rest are only counted.</summary>
@@ -49,7 +53,11 @@ namespace valheimCLI
         // Request: the command line after "cli_call"
         // ------------------------------------------------------------------
 
-        /// <summary>One argument as typed. A quoted token is text: it may hold spaces and is never null.</summary>
+        /// <summary>
+        /// One argument as typed. A quoted token is text: it may hold spaces
+        /// and is never null. A value token carries an object already in hand
+        /// (the value of an @Type.Member reference) instead of text to read.
+        /// </summary>
         public sealed class Token
         {
             public Token(string text, bool quoted)
@@ -58,8 +66,14 @@ namespace valheimCLI
                 Quoted = quoted;
             }
 
+            /// <param name="text">the reference as typed, for messages</param>
+            /// <param name="value">the member's value, passed as it is</param>
+            public static Token ForValue(string text, object? value) => new Token(text, false) { IsValue = true, Value = value };
+
             public string Text { get; }
             public bool Quoted { get; }
+            public bool IsValue { get; private set; }
+            public object? Value { get; private set; }
         }
 
         public sealed class Request
@@ -661,9 +675,14 @@ namespace valheimCLI
                         continue;
                     }
                     Token token = arguments[given++];
-                    if (!CallValues.TryConvert(token.Text, token.Quoted, type, out object? value, out int argumentCost))
+                    bool converted = token.IsValue
+                        ? CallValues.TryConvertValue(token.Value, type, out object? value, out int argumentCost)
+                        : CallValues.TryConvert(token.Text, token.Quoted, type, out value, out argumentCost);
+                    if (!converted)
                     {
-                        failed = "cannot read " + (token.Quoted ? CallValues.Quote(token.Text) : "'" + token.Text + "'") +
+                        failed = (token.IsValue
+                                ? "cannot pass " + token.Text + " (" + (token.Value == null ? "null" : CallValues.FriendlyName(token.Value.GetType())) + ")"
+                                : "cannot read " + (token.Quoted ? CallValues.Quote(token.Text) : "'" + token.Text + "'")) +
                             " as " + CallValues.FriendlyName(type) + " for parameter " + p.Name + " of " + Signature(method);
                         break;
                     }
@@ -743,6 +762,210 @@ namespace valheimCLI
         }
 
         // ------------------------------------------------------------------
+        // Targets: a static member, or a member of a static member's value
+        // ------------------------------------------------------------------
+
+        private const BindingFlags InstanceMembers = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+
+        /// <summary>
+        /// What a path names: the members called <see cref="MemberName"/> of
+        /// <see cref="Type"/>, static ones when <see cref="Instance"/> is null,
+        /// otherwise instance ones of that object, the value of <see cref="Via"/>.
+        /// </summary>
+        public sealed class Target
+        {
+            public Target(Type type, string memberName, MemberInfo[] members, object? instance, string? via, Copies copies)
+            {
+                Type = type;
+                MemberName = memberName;
+                Members = members;
+                Instance = instance;
+                Via = via;
+                Copies = copies;
+            }
+
+            public Type Type { get; }
+            public string MemberName { get; }
+            public MemberInfo[] Members { get; }
+            public object? Instance { get; }
+            /// <summary>The path whose value the instance member belongs to; null for a static member.</summary>
+            public string? Via { get; }
+            /// <summary>The copy chosen for the static member the path starts from.</summary>
+            public Copies Copies { get; }
+
+            /// <summary>Type.Member for the OK line.</summary>
+            public string Name => DottedName(Type) + "." + MemberName;
+
+            /// <summary>The path as it resolved: Type.Member, or Via.Member for an instance member.</summary>
+            public string Path => Via == null ? Name : Via + "." + MemberName;
+        }
+
+        /// <summary>
+        /// Resolve a path. "Type.Member" is a static member (see TryResolve).
+        /// When no static member has the path and it has another dot, the
+        /// part before the last dot is read as a value (a static field,
+        /// property or parameterless method, or itself such a chain) and the
+        /// last part is an instance member of that value:
+        /// "ZNet.instance.GetWorldName" calls GetWorldName on the object that
+        /// ZNet.instance holds. A static member with the whole path wins over
+        /// a chain, so what a path meant before never changes.
+        /// </summary>
+        public static bool TryResolveTarget(TypeIndex index, string path, out Target? target, out Failure? failure,
+            Func<ICollection<Assembly>>? liveAssemblies = null, string? assemblyPrefix = null, Action<string, Exception>? onThrow = null)
+        {
+            target = null;
+            if (TryResolve(index, path, out Resolution? resolution, out failure, liveAssemblies, assemblyPrefix))
+            {
+                target = new Target(resolution!.Type, resolution.MemberName, resolution.Members, null, null, resolution.Copies);
+                return true;
+            }
+            int dot = path.LastIndexOf('.');
+            bool chain = (failure!.Code == "no_type" || failure.Code == "no_member") &&
+                         dot > 0 && dot < path.Length - 1 && path.LastIndexOf('.', dot - 1) > 0;
+            if (!chain)
+            {
+                return false;
+            }
+            string head = path.Substring(0, dot);
+            string memberName = path.Substring(dot + 1);
+            if (!TryReadValue(index, head, out object? value, out Target? source, out Failure? headFailure,
+                    liveAssemblies, assemblyPrefix, onThrow))
+            {
+                // A head that is a type name, or that names no type at all,
+                // was never a chain: the static reading's error is the one
+                // that helps ("Outer.Nested has no Foo", not "Outer has no
+                // static Nested").
+                if (headFailure!.Code != "no_type" && index.Find(head).Count == 0)
+                {
+                    failure = headFailure;
+                }
+                return false;
+            }
+            string via = source!.Path;
+            if (value == null)
+            {
+                failure = new Failure("null_target", via + " is null; there is no object to use " + memberName + " on");
+                return false;
+            }
+            Type type = value.GetType();
+            MemberInfo[] members = InstanceMembersNamed(type, memberName);
+            if (members.Length == 0)
+            {
+                failure = NoInstanceMember(type, via, memberName);
+                return false;
+            }
+            target = new Target(type, memberName, members, value, via, source.Copies);
+            return true;
+        }
+
+        /// <summary>
+        /// Read a path as a value: a field, a property, or a method without
+        /// parameters (static, or on a chain as in TryResolveTarget).
+        /// <paramref name="source"/> is the target that was read.
+        /// </summary>
+        public static bool TryReadValue(TypeIndex index, string path, out object? value, out Target? source, out Failure? failure,
+            Func<ICollection<Assembly>>? liveAssemblies = null, string? assemblyPrefix = null, Action<string, Exception>? onThrow = null)
+        {
+            value = null;
+            if (!TryResolveTarget(index, path, out source, out failure, liveAssemblies, assemblyPrefix, onThrow))
+            {
+                return false;
+            }
+            Target target = source!;
+            try
+            {
+                MethodInfo[] methods = target.Members.OfType<MethodInfo>().ToArray();
+                if (methods.Length > 0)
+                {
+                    MethodInfo? bare = methods.FirstOrDefault(m => !m.ContainsGenericParameters && m.GetParameters().Length == 0);
+                    if (bare == null)
+                    {
+                        failure = new Failure("not_callable", target.Path +
+                            " takes arguments; as a value only a field, a property or a method without parameters can be read",
+                            methods.Select(m => "overload: " + Signature(m)).ToList());
+                        return false;
+                    }
+                    value = bare.Invoke(target.Instance, null);
+                    return true;
+                }
+                FieldInfo? field = target.Members.OfType<FieldInfo>().FirstOrDefault();
+                if (field != null)
+                {
+                    value = field.GetValue(target.Instance);
+                    return true;
+                }
+                PropertyInfo property = target.Members.OfType<PropertyInfo>().First();
+                if (property.GetGetMethod(true) == null)
+                {
+                    failure = new Failure("not_callable", target.Path + " has no getter");
+                    return false;
+                }
+                value = property.GetValue(target.Instance, null);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                failure = CallFailure(target.Path, ex, onThrow);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Instance fields, properties (not indexers) and methods of that name,
+        /// private ones of base classes included. A method overridden further
+        /// down is listed once; a field or property hides one of a base class.
+        /// </summary>
+        private static MemberInfo[] InstanceMembersNamed(Type type, string name)
+        {
+            List<MemberInfo> found = new List<MemberInfo>();
+            HashSet<MethodInfo> bases = new HashSet<MethodInfo>();
+            bool haveValue = false;
+            for (Type? t = type; t != null; t = t.BaseType)
+            {
+                foreach (MemberInfo member in t.GetMember(name, MemberTypes.Field | MemberTypes.Method | MemberTypes.Property,
+                             InstanceMembers | BindingFlags.DeclaredOnly))
+                {
+                    if (member is MethodInfo method)
+                    {
+                        if (bases.Add(method.GetBaseDefinition()))
+                        {
+                            found.Add(method);
+                        }
+                    }
+                    else if (!haveValue && !(member is PropertyInfo indexed && indexed.GetIndexParameters().Length > 0))
+                    {
+                        found.Add(member);
+                        haveValue = true;
+                    }
+                }
+            }
+            return found.ToArray();
+        }
+
+        private static Failure NoInstanceMember(Type type, string via, string memberName)
+        {
+            // The value's own runtime type is loaded and complete, so unlike
+            // the index's types it can be listed without guarding.
+            List<string> names = new List<string>();
+            for (Type? t = type; t != null && t != typeof(object); t = t.BaseType)
+            {
+                names.AddRange(t.GetMembers(InstanceMembers | BindingFlags.DeclaredOnly)
+                    .Where(m => (m is FieldInfo || (m is PropertyInfo p && p.GetIndexParameters().Length == 0) ||
+                                 (m is MethodInfo method && !method.IsSpecialName)) && m.Name.IndexOf('<') < 0)
+                    .Select(m => m.Name));
+            }
+            names = names.Distinct().OrderBy(n => n, StringComparer.Ordinal).ToList();
+            List<string> details = names.Where(n => string.Equals(n, memberName, StringComparison.OrdinalIgnoreCase))
+                .Select(n => "did you mean " + via + "." + n + "?").ToList();
+            if (names.Count > 0)
+            {
+                details.Add("instance members: " + string.Join(" ", names.Take(MaxListed).ToArray()) +
+                    (names.Count > MaxListed ? " ...(" + (names.Count - MaxListed).ToString(Inv) + " more)" : ""));
+            }
+            return new Failure("no_member", via + " is a " + DottedName(type) + ", which has no instance field, property or method named " + memberName, details);
+        }
+
+        // ------------------------------------------------------------------
         // Run: the whole command
         // ------------------------------------------------------------------
 
@@ -766,22 +989,51 @@ namespace valheimCLI
                 output(Usage);
                 return;
             }
-            if (!TryResolve(index, request!.Path, out Resolution? resolution, out Failure? failure, liveAssemblies, request.AssemblyPrefix))
+            if (!TryResolveTarget(index, request!.Path, out Target? resolved, out Failure? failure, liveAssemblies, request.AssemblyPrefix, onThrow))
             {
                 Emit(failure!, output);
                 return;
             }
+            Target target = resolved!;
 
-            Type type = resolution!.Type;
-            string target = DottedName(type) + "." + resolution.MemberName;
-            MethodInfo[] methods = resolution.Members.OfType<MethodInfo>().ToArray();
-            FieldInfo? field = resolution.Members.OfType<FieldInfo>().FirstOrDefault();
-            PropertyInfo? property = resolution.Members.OfType<PropertyInfo>().FirstOrDefault();
+            // @Type.Member arguments are read now, in order, and passed as the
+            // objects they are; @@ stands for a literal leading @.
+            List<Token> arguments = new List<Token>();
+            StringBuilder references = new StringBuilder();
+            for (int i = 0; i < request.Arguments.Count; i++)
+            {
+                Token token = request.Arguments[i];
+                if (token.Quoted || !token.Text.StartsWith("@", StringComparison.Ordinal))
+                {
+                    arguments.Add(token);
+                    continue;
+                }
+                if (token.Text.StartsWith("@@", StringComparison.Ordinal))
+                {
+                    arguments.Add(new Token(token.Text.Substring(1), false));
+                    continue;
+                }
+                if (!TryReadValue(index, token.Text.Substring(1), out object? value, out Target? source, out Failure? argumentFailure,
+                        liveAssemblies, null, onThrow))
+                {
+                    Emit(new Failure(argumentFailure!.Code, "argument " + (i + 1).ToString(Inv) + " (" + token.Text + "): " + argumentFailure.Message,
+                        argumentFailure.Details), output);
+                    return;
+                }
+                arguments.Add(Token.ForValue(token.Text, value));
+                references.Append(" ref").Append((i + 1).ToString(Inv)).Append('=').Append(source!.Path);
+            }
 
-            if (methods.Length == 0 && request.Arguments.Count > 0)
+            string path = target.Path;
+            object? instance = target.Instance;
+            MethodInfo[] methods = target.Members.OfType<MethodInfo>().ToArray();
+            FieldInfo? field = target.Members.OfType<FieldInfo>().FirstOrDefault();
+            PropertyInfo? property = target.Members.OfType<PropertyInfo>().FirstOrDefault();
+
+            if (methods.Length == 0 && arguments.Count > 0)
             {
                 string kind = field != null ? "field" : "property";
-                Emit(new Failure("bad_argument", target + " is a " + kind + "; it takes no arguments (cli_call reads it, it does not set it)"), output);
+                Emit(new Failure("bad_argument", path + " is a " + kind + "; it takes no arguments (cli_call reads it, it does not set it)"), output);
                 return;
             }
 
@@ -793,47 +1045,36 @@ namespace valheimCLI
             {
                 if (methods.Length > 0)
                 {
-                    if (!TrySelectOverload(methods, request.Arguments, out choice, out failure))
+                    if (!TrySelectOverload(methods, arguments, out choice, out failure))
                     {
                         Emit(failure!, output);
                         return;
                     }
                     resultType = choice!.Method.ReturnType;
                     header = "kind=method" + (methods.Length > 1 ? " overload=" + ParameterTypes(choice.Method) : "");
-                    result = choice.Method.Invoke(null, choice.Values);
+                    result = choice.Method.Invoke(instance, choice.Values);
                 }
                 else if (field != null)
                 {
                     resultType = field.FieldType;
                     header = field.IsLiteral ? "kind=constant" : "kind=field";
-                    result = field.GetValue(null);
+                    result = field.GetValue(instance);
                 }
                 else
                 {
                     if (property!.GetGetMethod(true) == null)
                     {
-                        Emit(new Failure("not_callable", target + " has no getter"), output);
+                        Emit(new Failure("not_callable", path + " has no getter"), output);
                         return;
                     }
                     resultType = property.PropertyType;
                     header = "kind=property";
-                    result = property.GetValue(null, null);
+                    result = property.GetValue(instance, null);
                 }
-            }
-            catch (TargetInvocationException ex) when (ex.InnerException != null)
-            {
-                Threw(target, ex.InnerException, output, onThrow);
-                return;
-            }
-            catch (TypeInitializationException ex)
-            {
-                Threw(target, ex, output, onThrow);
-                return;
             }
             catch (Exception ex)
             {
-                onThrow?.Invoke(target, ex);
-                output("ERROR: code=call_failed message=could not call " + target + ": " + ex.GetType().FullName + ": " + OneLine(ex.Message));
+                Emit(CallFailure(path, ex, onThrow), output);
                 return;
             }
 
@@ -844,7 +1085,7 @@ namespace valheimCLI
                 {
                     if (!TryWriteItems((IEnumerable)result!, request.ItemLimit, output, out summary, out Exception? walkError))
                     {
-                        Threw(target + " (walking the result)", walkError!, output, onThrow);
+                        Threw(path + " (walking the result)", walkError!, output, onThrow);
                         return;
                     }
                 }
@@ -864,10 +1105,33 @@ namespace valheimCLI
                     }
                 }
             }
-            string copies = resolution.Copies.Stale > 0
-                ? " assembly=" + AssemblyName(type) + " stale_copies=" + resolution.Copies.Stale.ToString(Inv) + " chosen=" + resolution.Copies.ChosenBy
+            string via = target.Via != null ? " via=" + target.Via : "";
+            Type copied = target.Copies.Chosen;
+            string copies = target.Copies.Stale > 0
+                ? " assembly=" + AssemblyName(copied) + " stale_copies=" + target.Copies.Stale.ToString(Inv) + " chosen=" + target.Copies.ChosenBy
                 : "";
-            output("OK: CALL " + target + " " + header + " type=" + CallValues.FriendlyName(resultType) + summary + copies);
+            output("OK: CALL " + target.Name + " " + header + " type=" + CallValues.FriendlyName(resultType) + summary + via + references + copies);
+        }
+
+        /// <summary>
+        /// An exception from calling or reading a member. The target's own
+        /// exception (unwrapped from reflection's wrapper) or a failed static
+        /// constructor is call_threw; anything else means reflection could not
+        /// make the call at all (call_failed).
+        /// </summary>
+        private static Failure CallFailure(string target, Exception ex, Action<string, Exception>? onThrow)
+        {
+            if (ex is TargetInvocationException && ex.InnerException != null)
+            {
+                ex = ex.InnerException;
+            }
+            else if (!(ex is TypeInitializationException))
+            {
+                onThrow?.Invoke(target, ex);
+                return new Failure("call_failed", "could not call " + target + ": " + ex.GetType().FullName + ": " + OneLine(ex.Message));
+            }
+            onThrow?.Invoke(target, ex);
+            return new Failure("call_threw", ThrewMessage(target, ex));
         }
 
         /// <summary>
@@ -944,12 +1208,17 @@ namespace valheimCLI
         private static void Threw(string target, Exception ex, Action<string> output, Action<string, Exception>? onThrow)
         {
             onThrow?.Invoke(target, ex);
+            output("ERROR: code=call_threw message=" + ThrewMessage(target, ex));
+        }
+
+        private static string ThrewMessage(string target, Exception ex)
+        {
             string message = OneLine(ex.Message);
             if (ex is TypeInitializationException && ex.InnerException != null)
             {
                 message += " (" + ex.InnerException.GetType().FullName + ": " + OneLine(ex.InnerException.Message) + ")";
             }
-            output("ERROR: code=call_threw message=" + target + " threw " + ex.GetType().FullName + ": " + message);
+            return target + " threw " + ex.GetType().FullName + ": " + message;
         }
 
         private static string OneLine(string text) => text.Replace("\r", " ").Replace("\n", " ").Trim();

@@ -118,6 +118,57 @@ namespace valheimCLI
             return true;
         }
 
+        /// <summary>
+        /// Pass an object already in hand (the value of an @Type.Member
+        /// argument) as <paramref name="target"/>: null to a reference or
+        /// nullable type, an object of that type or of one derived from it,
+        /// or a number to another numeric type that holds it.
+        /// </summary>
+        public static bool TryConvertValue(object? value, Type target, out object? converted, out int cost)
+        {
+            converted = null;
+            cost = 0;
+            if (target.IsByRef)
+            {
+                target = target.GetElementType()!;
+            }
+            if (value == null)
+            {
+                return !target.IsValueType || Nullable.GetUnderlyingType(target) != null;
+            }
+            Type? underlying = Nullable.GetUnderlyingType(target);
+            if (underlying != null)
+            {
+                if (!TryConvertValue(value, underlying, out converted, out cost))
+                {
+                    return false;
+                }
+                cost += Cost.NullableWrap;
+                return true;
+            }
+            Type actual = value.GetType();
+            if (target.IsAssignableFrom(actual))
+            {
+                converted = value;
+                cost = actual == target ? Cost.Exact : target == typeof(object) ? Cost.Widened : Cost.Near;
+                return true;
+            }
+            if (IsNumber(actual) && IsNumber(target))
+            {
+                try
+                {
+                    converted = Convert.ChangeType(value, target, Inv);
+                    cost = Cost.Widened;
+                    return true;
+                }
+                catch (OverflowException)
+                {
+                    return false;
+                }
+            }
+            return false;
+        }
+
         private static bool TryConvertNonText(string text, Type target, out object? value, out int cost)
         {
             value = null;

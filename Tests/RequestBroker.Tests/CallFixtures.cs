@@ -284,3 +284,96 @@ namespace CallFixtures
     {
     }
 }
+
+namespace CallFixtures
+{
+    /// <summary>A singleton reached through a static field, like the game's WorldGenerator.instance.</summary>
+    public class Generator
+    {
+        public static Generator? instance = new Generator(7);
+        public static Generator? Missing;
+        public static Generator Exploding => throw new InvalidOperationException("no world loaded");
+
+        public static Generator Make() => new Generator(3);
+        public static Generator Seeded(int seed) => new Generator(seed);
+
+        public Generator(int seed)
+        {
+            Seed = seed;
+        }
+
+        public int Seed { get; }
+        public float Scale = 2f;
+        public Settings Config = new Settings();
+
+        public Biome GetBiome(Vec3 point) => Biome.Swamp;
+        public Biome GetBiome(Cell zone) => Biome.Mountain;
+        public Biome GetBiome(float wx, float wy, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) =>
+            wx > 0 ? Biome.Meadows : Biome.Swamp;
+
+        public string Name() => "generator " + Seed;
+        public virtual string Kind() => "base";
+        private int Secret() => Seed * 10;
+        public string Fail() => throw new InvalidOperationException("not ready");
+    }
+
+    public class DerivedGenerator : Generator
+    {
+        public static DerivedGenerator Special = new DerivedGenerator();
+
+        public DerivedGenerator() : base(5) { }
+
+        public override string Kind() => "derived";
+    }
+
+    public class Settings
+    {
+        public int Radius = 64;
+    }
+
+    /// <summary>A mod's static helper that takes the singleton as an argument.</summary>
+    public static class Blend
+    {
+        public static float Height(float wx, float wy, Generator gen) => wx + wy + gen.Seed;
+
+        public static Info Debug(float wx, float wy, Generator gen) =>
+            new Info { Seed = gen.Seed, At = new Vec3(wx, 0f, wy), Biome = gen.GetBiome(wx, wy) };
+
+        public struct Info
+        {
+            public int Seed;
+            public Vec3 At;
+            public Biome Biome;
+        }
+
+        public static string Describe(object value) => "object " + value;
+        public static string Describe(Generator gen) => "generator " + gen.Seed;
+        public static double Twice(double x) => x * 2;
+        public static string Maybe(Generator? gen) => gen == null ? "none" : "some";
+        public static string Echo(string text) => text;
+    }
+}
+
+// "Holder.Slot.Item" reads two ways: the static field Item of Shade.Holder.Slot,
+// or the instance field Item of the value of Other.Holder.Slot. The static
+// reading must win.
+namespace CallFixtures.Shade.Holder
+{
+    public static class Slot
+    {
+        public static string Item = "static";
+    }
+}
+
+namespace CallFixtures.Other
+{
+    public static class Holder
+    {
+        public static SlotValue Slot = new SlotValue();
+    }
+
+    public class SlotValue
+    {
+        public string Item = "chain";
+    }
+}
