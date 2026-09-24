@@ -49,16 +49,94 @@ namespace valheimCLI.Tests
         [InlineData(true, true)]
         public void BeforeAcceptanceNothingCanBounce(bool teleporting, bool atTarget)
         {
-            Assert.Equal(ArriveStep.Offer, PlayerModes.NextArriveStep(accepted: false, teleporting, atTarget));
+            Assert.Equal(ArriveStep.Offer, PlayerModes.NextArriveStep(TeleportBlock.None, accepted: false, teleporting, atTarget));
         }
 
         [Fact]
         public void AfterAcceptanceTheTeleportRunsThenLandsOrBounces()
         {
-            Assert.Equal(ArriveStep.InFlight, PlayerModes.NextArriveStep(true, teleporting: true, atTarget: false));
-            Assert.Equal(ArriveStep.InFlight, PlayerModes.NextArriveStep(true, teleporting: true, atTarget: true));
-            Assert.Equal(ArriveStep.Bounced, PlayerModes.NextArriveStep(true, teleporting: false, atTarget: false));
-            Assert.Equal(ArriveStep.Landed, PlayerModes.NextArriveStep(true, teleporting: false, atTarget: true));
+            Assert.Equal(ArriveStep.InFlight, PlayerModes.NextArriveStep(TeleportBlock.None, true, teleporting: true, atTarget: false));
+            Assert.Equal(ArriveStep.InFlight, PlayerModes.NextArriveStep(TeleportBlock.None, true, teleporting: true, atTarget: true));
+            Assert.Equal(ArriveStep.Bounced, PlayerModes.NextArriveStep(TeleportBlock.None, true, teleporting: false, atTarget: false));
+            Assert.Equal(ArriveStep.Landed, PlayerModes.NextArriveStep(TeleportBlock.None, true, teleporting: false, atTarget: true));
+        }
+
+        /// <summary>
+        /// The failure this fixes: during the first-spawn intro TeleportTo
+        /// accepts, the player is moved, and the valkyrie carries it straight
+        /// back. The old request asked the game and reported Accepted; a blocked
+        /// player must be refused without asking.
+        /// </summary>
+        [Fact]
+        public void AnIntroRefusesTheTeleportWithoutAskingTheGame()
+        {
+            bool asked = false;
+            TeleportAnswer answer = PlayerModes.RequestTeleport(TeleportBlock.Intro, () => { asked = true; return true; }, () => true, () => true);
+            Assert.Equal(TeleportAnswer.Intro, answer);
+            Assert.False(asked);
+            Assert.Contains("intro", PlayerModes.DescribeRefusal(answer));
+            Assert.False(PlayerModes.WorthRetrying(answer));
+        }
+
+        [Fact]
+        public void AnUnblockedRequestStillAsksTheGame()
+        {
+            bool asked = false;
+            Assert.Equal(TeleportAnswer.Accepted, PlayerModes.RequestTeleport(TeleportBlock.None, () => { asked = true; return true; }, () => true, () => true));
+            Assert.True(asked);
+            Assert.Equal(TeleportAnswer.Cooldown, PlayerModes.RequestTeleport(TeleportBlock.None, () => false, () => true, () => false));
+        }
+
+        [Theory]
+        [InlineData(TeleportBlock.Attached, TeleportAnswer.Attached, "attached")]
+        [InlineData(TeleportBlock.Dead, TeleportAnswer.Dead, "dead")]
+        public void OtherStatesThatUndoATeleportAreRefusedToo(TeleportBlock block, TeleportAnswer expected, string reason)
+        {
+            TeleportAnswer answer = PlayerModes.RequestTeleport(block, () => true, () => true, () => false);
+            Assert.Equal(expected, answer);
+            Assert.Contains(reason, PlayerModes.DescribeRefusal(answer));
+            Assert.False(PlayerModes.WorthRetrying(answer));
+            Assert.Equal(expected, PlayerModes.BlockAnswer(block));
+        }
+
+        [Fact]
+        public void TheBlockerIsReadFromThePlayersState()
+        {
+            Assert.Equal(TeleportBlock.None, PlayerModes.Blocker(false, false, false, false));
+            Assert.Equal(TeleportBlock.Intro, PlayerModes.Blocker(inIntro: true, false, false, false));
+            Assert.Equal(TeleportBlock.Intro, PlayerModes.Blocker(false, valkyrieCarrying: true, false, false));
+            Assert.Equal(TeleportBlock.Attached, PlayerModes.Blocker(false, false, attached: true, false));
+            Assert.Equal(TeleportBlock.Dead, PlayerModes.Blocker(true, true, true, dead: true));
+            Assert.Equal(TeleportAnswer.Accepted, PlayerModes.BlockAnswer(TeleportBlock.None));
+        }
+
+        /// <summary>
+        /// The in-game failure: an intro player at the target with the zones
+        /// loaded read as Landed, and the valkyrie carried it away a moment
+        /// later. Whatever else is true, a blocked player has not landed.
+        /// </summary>
+        [Theory]
+        [InlineData(false, false, true)]
+        [InlineData(true, false, true)]
+        [InlineData(true, true, false)]
+        public void ABlockedPlayerNeverLands(bool accepted, bool teleporting, bool atTarget)
+        {
+            Assert.Equal(ArriveStep.Blocked, PlayerModes.NextArriveStep(TeleportBlock.Intro, accepted, teleporting, atTarget));
+            Assert.Equal(ArriveStep.Blocked, PlayerModes.NextArriveStep(TeleportBlock.Attached, accepted, teleporting, atTarget));
+        }
+
+        [Fact]
+        public void ALandingHoldsOnlyWhereItLanded()
+        {
+            Assert.True(PlayerModes.LandingHeld(TeleportBlock.None, false, 0.1f, -0.3f));
+            Assert.True(PlayerModes.LandingHeld(TeleportBlock.None, false, 2f, 1.5f));
+            // Carried 170 m up by the valkyrie, as observed in game.
+            Assert.False(PlayerModes.LandingHeld(TeleportBlock.None, false, 0.2f, 170.4f));
+            Assert.False(PlayerModes.LandingHeld(TeleportBlock.None, false, 2.5f, 0f));
+            Assert.False(PlayerModes.LandingHeld(TeleportBlock.None, false, 0f, -1.6f));
+            Assert.False(PlayerModes.LandingHeld(TeleportBlock.None, teleporting: true, 0f, 0f));
+            Assert.False(PlayerModes.LandingHeld(TeleportBlock.Intro, false, 0f, 0f));
+            Assert.Equal(1f, PlayerModes.LandingSettleSeconds);
         }
 
         [Fact]

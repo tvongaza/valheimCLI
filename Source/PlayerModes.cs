@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace valheimCLI
@@ -11,7 +12,28 @@ namespace valheimCLI
         /// <summary>Refused: the game allows a new teleport only 2 s after the last one finished.</summary>
         Cooldown,
         /// <summary>This peer does not own the character, so the game forwarded the request to the owner.</summary>
-        Forwarded
+        Forwarded,
+        /// <summary>Not offered: the first-spawn intro is running and the valkyrie carries the player.</summary>
+        Intro,
+        /// <summary>Not offered: the player is attached (seat, bed, ship's helm, saddle) and the attachment holds it in place.</summary>
+        Attached,
+        /// <summary>Not offered: the player is dead.</summary>
+        Dead
+    }
+
+    /// <summary>
+    /// A player state in which a teleport cannot stick, whatever TeleportTo
+    /// answers. TeleportTo accepts in all of these, moves the player, and
+    /// something else puts it back: the intro valkyrie sets the player's
+    /// position every frame until it drops them, and an attachment snaps the
+    /// player to its attach point every frame.
+    /// </summary>
+    public enum TeleportBlock
+    {
+        None,
+        Intro,
+        Attached,
+        Dead
     }
 
     /// <summary>What cli_arrive does on a frame, given what the player is doing.</summary>
@@ -24,7 +46,9 @@ namespace valheimCLI
         /// <summary>An accepted teleport finished away from the target (the game put the player back).</summary>
         Bounced,
         /// <summary>At the target; wait for the zones.</summary>
-        Landed
+        Landed,
+        /// <summary>The player is in a state no teleport survives (see TeleportBlock): give up with its reason.</summary>
+        Blocked
     }
 
     /// <summary>
@@ -40,6 +64,46 @@ namespace valheimCLI
     /// </summary>
     public static class PlayerModes
     {
+        /// <summary>
+        /// Seconds a landing must hold before cli_arrive reports it. Something
+        /// that holds the player (an attachment, a cutscene) moves it back
+        /// within a frame or two of the landing; one second also lets the
+        /// set-down on the ground come to rest.
+        /// </summary>
+        public const float LandingSettleSeconds = 1f;
+
+        /// <summary>How far a held landing may drift: horizontally, and vertically (settling onto the ground from the set-down height).</summary>
+        public const float LandingHorizontalTolerance = 2f;
+        public const float LandingVerticalTolerance = 1.5f;
+
+        /// <summary>The first state that makes a teleport pointless, in order of what is reported.</summary>
+        public static TeleportBlock Blocker(bool inIntro, bool valkyrieCarrying, bool attached, bool dead)
+        {
+            if (dead)
+            {
+                return TeleportBlock.Dead;
+            }
+            if (inIntro || valkyrieCarrying)
+            {
+                return TeleportBlock.Intro;
+            }
+            return attached ? TeleportBlock.Attached : TeleportBlock.None;
+        }
+
+        /// <summary>
+        /// Ask for a teleport. A blocked player is refused before the game is
+        /// asked: TeleportTo would accept, and the teleport would be undone.
+        /// </summary>
+        public static TeleportAnswer RequestTeleport(TeleportBlock block, Func<bool> teleportTo, Func<bool> ownsCharacter, Func<bool> teleporting)
+        {
+            if (block != TeleportBlock.None)
+            {
+                return BlockAnswer(block);
+            }
+            bool accepted = teleportTo();
+            return ClassifyTeleport(accepted, ownsCharacter(), teleporting());
+        }
+
         public static TeleportAnswer ClassifyTeleport(bool accepted, bool ownsCharacter, bool teleporting)
         {
             if (accepted)
@@ -64,6 +128,12 @@ namespace valheimCLI
                     return "the game allows a teleport 2 s after the last one finished";
                 case TeleportAnswer.Forwarded:
                     return "this peer does not own the character; the request was forwarded to its owner";
+                case TeleportAnswer.Intro:
+                    return "the first-spawn intro is in progress; the valkyrie holds the player until it drops them";
+                case TeleportAnswer.Attached:
+                    return "the player is attached (seat, bed, helm or saddle) and would be held in place";
+                case TeleportAnswer.Dead:
+                    return "the player is dead";
                 default:
                     return "accepted";
             }
@@ -78,8 +148,12 @@ namespace valheimCLI
         /// bounce; before that, the player not being at the target means
         /// nothing has happened yet.
         /// </summary>
-        public static ArriveStep NextArriveStep(bool accepted, bool teleporting, bool atTarget)
+        public static ArriveStep NextArriveStep(TeleportBlock block, bool accepted, bool teleporting, bool atTarget)
         {
+            if (block != TeleportBlock.None)
+            {
+                return ArriveStep.Blocked;
+            }
             if (!accepted)
             {
                 return ArriveStep.Offer;
@@ -90,6 +164,31 @@ namespace valheimCLI
             }
             return atTarget ? ArriveStep.Landed : ArriveStep.Bounced;
         }
+
+        /// <summary>The refusal a blocked arrival reports.</summary>
+        public static TeleportAnswer BlockAnswer(TeleportBlock block)
+        {
+            switch (block)
+            {
+                case TeleportBlock.Intro:
+                    return TeleportAnswer.Intro;
+                case TeleportBlock.Attached:
+                    return TeleportAnswer.Attached;
+                case TeleportBlock.Dead:
+                    return TeleportAnswer.Dead;
+                default:
+                    return TeleportAnswer.Accepted;
+            }
+        }
+
+        /// <summary>
+        /// Whether a declared landing still holds on a later frame: nothing
+        /// blocks the player, no teleport runs, and the player is still where
+        /// it landed.
+        /// </summary>
+        public static bool LandingHeld(TeleportBlock block, bool teleporting, float horizontalDrift, float verticalDrift) =>
+            block == TeleportBlock.None && !teleporting &&
+            horizontalDrift <= LandingHorizontalTolerance && Math.Abs(verticalDrift) <= LandingVerticalTolerance;
 
         /// <summary>
         /// The error code when cli_arrive runs out of time. A teleport the game

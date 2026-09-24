@@ -1445,7 +1445,7 @@ namespace valheimCLI
             TeleportAnswer answer = RequestTeleport(player, position, distant);
             if (answer != TeleportAnswer.Accepted)
             {
-                addOutput($"ERROR: code=teleport_refused reason={PlayerModes.DescribeRefusal(answer)}");
+                addOutput($"ERROR: code=teleport_refused reason={PlayerModes.DescribeRefusal(answer)} {TeleportStateFields(player)}");
                 return;
             }
             addOutput($"OK: Teleported to {position.x:F1}, {position.y:F1}, {position.z:F1} distant={distant}");
@@ -1459,9 +1459,37 @@ namespace valheimCLI
         /// </summary>
         public static TeleportAnswer RequestTeleport(Player player, Vector3 position, bool distant)
         {
-            bool accepted = player.TeleportTo(position, player.transform.rotation, distantTeleport: distant);
-            bool owner = player.m_nview != null && player.m_nview.IsOwner();
-            return PlayerModes.ClassifyTeleport(accepted, owner, player.IsTeleporting());
+            return PlayerModes.RequestTeleport(TeleportBlocker(player),
+                () => player.TeleportTo(position, player.transform.rotation, distantTeleport: distant),
+                () => player.m_nview != null && player.m_nview.IsOwner(),
+                player.IsTeleporting);
+        }
+
+        /// <summary>
+        /// What would undo a teleport right now. TeleportTo itself accepts in
+        /// these states: during the first-spawn intro the valkyrie sets the
+        /// player's position every frame until it drops them, and an
+        /// attachment (seat, bed, helm, saddle) does the same from its attach
+        /// point.
+        /// </summary>
+        public static TeleportBlock TeleportBlocker(Player player)
+        {
+            return PlayerModes.Blocker(player.InIntro(), ValkyrieCarriesPlayer(), player.IsAttached(), player.IsDead());
+        }
+
+        private static bool ValkyrieCarriesPlayer()
+        {
+            Valkyrie valkyrie = Valkyrie.m_instance;
+            return valkyrie != null && valkyrie.enabled && !valkyrie.m_droppedPlayer;
+        }
+
+        /// <summary>The player-state fields a refused or failed teleport reports, named as cli_player_state names them.</summary>
+        public static string TeleportStateFields(Player player)
+        {
+            Vector3 p = player.transform.position;
+            return string.Format(CultureInfo.InvariantCulture,
+                "inIntro={0} valkyrieCarrying={1} attached={2} dead={3} teleporting={4} position={5:F1},{6:F1},{7:F1}",
+                player.InIntro(), ValkyrieCarriesPlayer(), player.IsAttached(), player.IsDead(), player.IsTeleporting(), p.x, p.y, p.z);
         }
 
         public static void GotoLocation(string locationNameOrGroup, Action<string> addOutput)

@@ -173,15 +173,38 @@ own the character it forwards the request instead.
 `cli_teleport` now reports a refusal instead of success:
 
 ```
-ERROR: code=teleport_refused reason=a teleport is still in progress
-ERROR: code=teleport_refused reason=the game allows a teleport 2 s after the last one finished
+ERROR: code=teleport_refused reason=a teleport is still in progress inIntro=False …
+ERROR: code=teleport_refused reason=the game allows a teleport 2 s after the last one finished inIntro=False …
 ```
 
-`cli_arrive` offers its teleport every frame until the game accepts it, then
-waits for landing and loaded zones as before. Its reply adds `acceptedMs`, the
-time until the game accepted; `retries` counts only bounced landings of accepted
-teleports. A timeout before any acceptance is `ERROR: code=teleport_refused`;
-after one, `ERROR: code=arrive_timeout`. A forwarded request fails at once.
+Some states undo any teleport the game accepts, so neither command asks it:
+during the first-spawn intro the valkyrie sets the player's position every
+frame until it drops them, an attachment (seat, bed, ship's helm, saddle) holds
+the player at its attach point, and a dead player is not going anywhere. These
+are refused at once, with the player's state on the line:
+
+```
+ERROR: code=teleport_refused reason=the first-spawn intro is in progress; the valkyrie holds the player until it drops them inIntro=True valkyrieCarrying=True attached=False dead=False teleporting=False position=…
+```
+
+`cli_arrive` refuses these rather than waiting them out: the intro moves on only
+when a person dismisses its text, and an attachment ends only when someone
+leaves it. Finish or skip the intro (`cli_check_intro_complete` says whether it
+is over) and stand up before arriving.
+
+Otherwise `cli_arrive` offers its teleport every frame until the game accepts
+it, then waits for landing and loaded zones as before. A landing then has to
+hold for 1 s: the player must stay within 2 m horizontally and 1.5 m vertically
+of where it landed, with no teleport running and nothing blocking. A landing
+that is undone in that time is not reported: if a blocking state caused it, the
+reply is `ERROR: code=teleport_refused reason=landing undone: …`; otherwise the
+teleport is offered again, like a bounce. The reply adds `acceptedMs`, the time
+until the game accepted, and `heldMs`; `retries` counts bounced or undone
+landings of accepted teleports. A timeout before any acceptance is
+`ERROR: code=teleport_refused`; after one, `ERROR: code=arrive_timeout`. Every
+failure line carries `inIntro`, `valkyrieCarrying` (a valkyrie that has not yet
+dropped the player), `attached`, `dead`, `teleporting` and `position`. A
+forwarded request fails at once.
 
 ## Player safety and fly
 
