@@ -152,6 +152,96 @@ namespace valheimCLI
 
                 PlaceSnapped(request!, args.Context.AddString);
             }, isCheat: true);
+
+            _ = new Terminal.ConsoleCommand("cli_piece_support_settle", "Recompute structural support now with the game's own rule, bottom-up, for the pieces this peer owns within a horizontal radius, and report each piece: cli_piece_support_settle <x> <z> [radius=10] [passes=3] [nameFilter]", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            {
+                if (!SupportSettleRequest.TryParse(args.Args, out SupportSettleRequest? request, out string error))
+                {
+                    args.Context.AddString(error);
+                    return;
+                }
+
+                SettleSupport(request!, args.Context.AddString);
+            }, isCheat: true);
+        }
+
+        /// <summary>
+        /// cli_piece_support_settle. Runs WearNTear.UpdateSupport on every piece
+        /// this peer owns in the column, lowest first, until a pass changes
+        /// nothing or the pass limit is reached (see SupportSettle). This WRITES
+        /// each owned piece's stored support, as the game's own update does, and
+        /// the game may ask other peers to clear cached support on their pieces.
+        /// It applies no damage: a piece reported held=False is one the game
+        /// breaks when it next updates that piece's wear. Remote-owned pieces
+        /// are not recomputed here; their line shows the support their owner
+        /// last stored.
+        /// </summary>
+        private static void SettleSupport(SupportSettleRequest request, Action<string> addOutput)
+        {
+            if (ZNetScene.instance == null)
+            {
+                addOutput("ERROR: no world loaded");
+                return;
+            }
+
+            float radiusSquared = request.Radius * request.Radius;
+            List<WearNTear> column = new();
+            foreach (WearNTear wear in WearNTear.GetAllInstances())
+            {
+                if (wear == null || wear.m_nview == null || !wear.m_nview.IsValid())
+                {
+                    continue;
+                }
+
+                Vector3 position = wear.transform.position;
+                float dx = position.x - request.X, dz = position.z - request.Z;
+                if (dx * dx + dz * dz <= radiusSquared)
+                {
+                    column.Add(wear);
+                }
+            }
+
+            List<SettlePiece> keys = column
+                .Select(wear => new SettlePiece(wear.transform.position.x, wear.transform.position.y, wear.transform.position.z, ZdoId(wear)))
+                .ToList();
+            List<WearNTear> ordered = SupportSettle.BottomUpOrder(keys).Select(index => column[index]).ToList();
+            List<WearNTear> owned = ordered.Where(wear => wear.m_nview.IsOwner()).ToList();
+
+            // UpdateSupport finds neighbours with a physics overlap; a piece
+            // placed earlier in this frame is only found once transforms sync.
+            Physics.SyncTransforms();
+            int passes = SupportSettle.RunPasses(request.Passes, () =>
+            {
+                bool changed = false;
+                foreach (WearNTear wear in owned)
+                {
+                    float before = wear.GetSupport();
+                    wear.UpdateSupport();
+                    changed |= SupportSettle.Changed(before, wear.GetSupport());
+                }
+                return changed;
+            }, out bool converged);
+
+            // Everything in the column settles; the filter chooses only what is reported.
+            int reported = 0, held = 0, unheld = 0;
+            foreach (WearNTear wear in ordered)
+            {
+                Piece? piece = wear.GetComponent<Piece>();
+                if (!string.IsNullOrEmpty(request.NameFilter) &&
+                    (piece == null ? PrefabName(wear.gameObject).IndexOf(request.NameFilter, StringComparison.OrdinalIgnoreCase) < 0 : !MatchesPiece(piece, request.NameFilter)))
+                {
+                    continue;
+                }
+
+                reported++;
+                bool isHeld = wear.GetSupport() >= wear.GetMinSupport();
+                if (isHeld) held++; else unheld++;
+                Vector3 position = wear.transform.position;
+                addOutput(SupportSettle.PieceLine(PrefabName(wear.gameObject), ZdoId(wear), position.x, position.y, position.z,
+                    wear.GetSupport(), wear.GetMaxSupport(), wear.GetMinSupport(), isHeld, wear.m_nview.IsOwner()));
+            }
+
+            addOutput(SupportSettle.SummaryLine(reported, owned.Count, ordered.Count - owned.Count, held, unheld, passes, converged, request.Radius));
         }
 
         // A piece's origin can stand several metres from its own snap points

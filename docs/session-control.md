@@ -135,6 +135,35 @@ snap points gives `ERROR: code=no_snap_points`; place it with
 Numbers must be finite and use a decimal point. A yaw or radius that does not
 parse is refused, never read as zero. `nocost` is only recognised last.
 
+## Settle structural support now
+
+The game recomputes a piece's support about once a second, and not at all for
+the first 30 s after a piece appears by any route other than the hammer
+(including `cli_spawn_piece` and pieces in a zone that has just loaded). A test
+that builds something and asks whether it stands would have to wait.
+
+`cli_piece_support_settle <x> <z> [radius=10] [passes=3] [nameFilter]` runs the
+game's own `WearNTear.UpdateSupport` now on every piece this peer owns within a
+horizontal radius of `x z`, lowest first. The rule reads each neighbour's
+stored support, so asking a column top-first reads stale values; bottom-up, one
+pass carries support up a column. Pieces at the same height are ordered by
+position and ZDO id, never by the scene's listing order. Passes repeat until one
+changes nothing (`converged=True`) or `passes` (1-20) have run. The filter
+chooses what is reported, not what is settled.
+
+```
+SUPPORT piece=wood_pole2 zdo=<id> pos=(x,y,z) support=55.00 max=100.00 min=10.00 held=True owner=local
+OK: PIECE_SUPPORT_SETTLE reported=6 settled=6 skippedRemote=0 held=5 unheld=1 passes=2 converged=True radius=10.0
+```
+
+This is a write, and cheat-marked: it stores each owned piece's support in its
+ZDO, as the game's own update does, and the game may ask other peers to clear
+their cached support. It applies no damage. `held=False` means support is below
+the piece's minimum; the game breaks that piece when it next updates its wear.
+Remote-owned pieces are not recomputed (`skippedRemote`); their lines show the
+support their owner last stored. `converged=False` means the limit ran out, not
+that the structure settled.
+
 ## Teleports the game refuses
 
 `Player.TeleportTo` does nothing while a teleport is running and for 2 s after
@@ -180,7 +209,7 @@ directly:
 | `cli_fly toggle` | Flip it |
 
 The reply is `OK: fly=True changed=True`, read back from the player. `cli_fly`,
-`cli_build_place_at` and `cli_build_place_snapped` are cheat-marked;
-`cli_build_snap_points` only reads. On a dedicated-server
+`cli_build_place_at`, `cli_build_place_snapped` and `cli_piece_support_settle`
+are cheat-marked; `cli_build_snap_points` only reads. On a dedicated-server
 client they need `AllowOnServerClients` like the other test actions; they are
 covered by it because this plugin registers them.
