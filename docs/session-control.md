@@ -59,3 +59,52 @@ that a queued attachment or ownership request has already completed.
 Use disposable worlds/characters for mutation tests and restore their files
 and plugin configuration after the session. Re-enable clutter before capture
 work ends if it was enabled at the start.
+
+## Teleports the game refuses
+
+`Player.TeleportTo` does nothing while a teleport is running and for 2 s after
+one finishes, and says so only through its return value. On a peer that does not
+own the character it forwards the request instead.
+
+`cli_teleport` now reports a refusal instead of success:
+
+```
+ERROR: code=teleport_refused reason=a teleport is still in progress
+ERROR: code=teleport_refused reason=the game allows a teleport 2 s after the last one finished
+```
+
+`cli_arrive` offers its teleport every frame until the game accepts it, then
+waits for landing and loaded zones as before. Its reply adds `acceptedMs`, the
+time until the game accepted; `retries` counts only bounced landings of accepted
+teleports. A timeout before any acceptance is `ERROR: code=teleport_refused`;
+after one, `ERROR: code=arrive_timeout`. A forwarded request fails at once.
+
+## Player safety and fly
+
+`cli_set_player_safety true|false` sets god mode, ghost mode and debug mode to
+the value given. `true` also switches cheats on, because debug mode's keys (fly
+on Z, no-cost building on B) do nothing without them; `false` leaves cheats as
+they were. Every flag is read back from the game onto the reply:
+
+```
+OK: playerSafety enabled=True god=True ghost=True debugMode=True cheats=True
+```
+
+A flag that did not take gives `ERROR: code=safety_not_applied` with the same
+fields. Check the line rather than running `debugmode` or `devcommands`, which
+toggle: run blind, they are as likely to switch a mode off as on.
+
+A client joined to a dedicated server never has cheats in effect, whatever the
+`cheats` field says, so the Z key does nothing there. `cli_fly` sets debug fly
+directly:
+
+| Command | Behaviour |
+| --- | --- |
+| `cli_fly` | Report the current state; change nothing |
+| `cli_fly on` / `cli_fly off` | Set it; running either twice is harmless |
+| `cli_fly toggle` | Flip it |
+
+The reply is `OK: fly=True changed=True`, read back from the player. `cli_fly`
+is cheat-marked. On a dedicated-server client it needs `AllowOnServerClients`
+like the other test actions; it is covered by it because this plugin registers
+it.

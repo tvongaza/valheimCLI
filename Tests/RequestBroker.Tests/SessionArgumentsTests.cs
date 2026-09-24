@@ -70,6 +70,8 @@ namespace valheimCLI.Tests
         [InlineData("cli_cart", "local-player")]
         [InlineData("cli_build_rotate", "local-player")]
         [InlineData("cli_clutter", "loaded-world")]
+        [InlineData("cli_fly", "local-player")]
+        [InlineData("cli_set_player_safety", "local-player")]
         public void ActionsDeclareExecutionContext(string name, string context)
         {
             Assert.Equal(context, CommandMetadata.GetPrecondition(new CommandInfo { Name = name }));

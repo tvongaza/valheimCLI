@@ -46,7 +46,7 @@ public static class CommandMetadata
             return "loaded-world";
         }
 
-        if (name is "cli_nearby_prefabs" or "cli_cart" or "cli_build_rotate")
+        if (name is "cli_nearby_prefabs" or "cli_cart" or "cli_build_rotate" or "cli_fly")
         {
             return "local-player";
         }

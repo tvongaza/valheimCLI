@@ -633,7 +633,7 @@ namespace valheimCLI
                 args.Context.AddString($"OK: tutorialsEnabled={enabled} dismissedActiveRaven={dismissed}");
             }, isCheat: true);
 
-            new Terminal.ConsoleCommand("cli_set_player_safety", "Set local player god and ghost modes: cli_set_player_safety <true|false>", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            new Terminal.ConsoleCommand("cli_set_player_safety", "Set local player god, ghost and debug modes (true also turns cheats on) and report each: cli_set_player_safety <true|false>", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
             {
                 if (args.Length < 2 || !bool.TryParse(args[1], out bool enabled))
                 {
@@ -642,6 +642,31 @@ namespace valheimCLI
                 }
 
                 SetPlayerSafety(enabled, args.Context.AddString);
+            }, isCheat: true);
+
+            new Terminal.ConsoleCommand("cli_fly", "Report, set or toggle the local player's debug fly without the Z key, which needs cheats in effect and so never works on a client joined to a dedicated server: cli_fly [on|off|toggle]", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            {
+                Player player = Player.m_localPlayer;
+                if (player == null)
+                {
+                    args.Context.AddString("ERROR: No local player found");
+                    return;
+                }
+
+                bool current = player.InDebugFlyMode();
+                if (!PlayerModes.TryFlyTarget(args.Args, current, out bool target, out _, out string error))
+                {
+                    args.Context.AddString(error);
+                    return;
+                }
+
+                // ToggleDebugFly flips the flag, so it is called only when the state differs.
+                if (target != current)
+                {
+                    player.ToggleDebugFly();
+                }
+                bool fly = player.InDebugFlyMode();
+                args.Context.AddString(PlayerModes.FlyLine(fly, fly != current));
             }, isCheat: true);
 
             new Terminal.ConsoleCommand("cli_give_item", "Add an item directly to the local player inventory: cli_give_item <prefab> [count] [quality]", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
@@ -1417,8 +1442,26 @@ namespace valheimCLI
                 return;
             }
 
-            player.TeleportTo(position, player.transform.rotation, distantTeleport: distant);
+            TeleportAnswer answer = RequestTeleport(player, position, distant);
+            if (answer != TeleportAnswer.Accepted)
+            {
+                addOutput($"ERROR: code=teleport_refused reason={PlayerModes.DescribeRefusal(answer)}");
+                return;
+            }
             addOutput($"OK: Teleported to {position.x:F1}, {position.y:F1}, {position.z:F1} distant={distant}");
+        }
+
+        /// <summary>
+        /// Ask the game to teleport the local player and say what it answered.
+        /// Player.TeleportTo returns false, and does nothing, while a teleport
+        /// is running and for 2 s after one finishes; the return value is the
+        /// only sign of that.
+        /// </summary>
+        public static TeleportAnswer RequestTeleport(Player player, Vector3 position, bool distant)
+        {
+            bool accepted = player.TeleportTo(position, player.transform.rotation, distantTeleport: distant);
+            bool owner = player.m_nview != null && player.m_nview.IsOwner();
+            return PlayerModes.ClassifyTeleport(accepted, owner, player.IsTeleporting());
         }
 
         public static void GotoLocation(string locationNameOrGroup, Action<string> addOutput)
@@ -4280,7 +4323,21 @@ namespace valheimCLI
 
             player.SetGodMode(enabled);
             player.SetGhostMode(enabled);
-            addOutput($"OK: playerSafety enabled={enabled} god={player.InGodMode()} ghost={player.InGhostMode()}");
+            // Debug mode (fly on Z, no-cost building on B) is set, never
+            // toggled: the vanilla debugmode command flips it, so running that
+            // blind is as likely to turn it off as on.
+            Player.m_debugMode = enabled;
+            // Debug mode's keys only work with cheats on, which the game starts
+            // with off. Cheats are switched on here and never off: turning them
+            // off could undo a devcommands the user ran on purpose. A client
+            // joined to a dedicated server never has cheats in effect whatever
+            // this flag says; cli_fly works there.
+            if (enabled && !Terminal.m_cheat)
+            {
+                Terminal.m_cheat = true;
+                Console.instance?.updateCommandList();
+            }
+            addOutput(PlayerModes.SafetyLine(enabled, player.InGodMode(), player.InGhostMode(), Player.m_debugMode, Terminal.m_cheat));
         }
 
         private static bool TryGetLocalInventory(Action<string> addOutput, out Inventory inventory)

@@ -52,7 +52,7 @@ namespace valheimCLI
 
         public static void Register()
         {
-            new Terminal.ConsoleCommand("cli_arrive", "Teleport and wait until the player has landed and every zone within radius is loaded: cli_arrive <x> <y> <z> [radius=64] [timeout=30]. A bounced landing is re-issued (up to three times).", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            new Terminal.ConsoleCommand("cli_arrive", "Teleport and wait until the player has landed and every zone within radius is loaded: cli_arrive <x> <y> <z> [radius=64] [timeout=30]. A teleport the game refuses (one in progress, or its 2 s cooldown) is offered again until accepted; a bounced landing is re-issued (up to three times).", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
             {
                 if (args.Length < 4 || !TryF(args[1], out float x) || !TryF(args[2], out float y) || !TryF(args[3], out float z))
                 {
@@ -201,30 +201,54 @@ namespace valheimCLI
             }
             Stopwatch clock = Stopwatch.StartNew();
             int retries = 0;
-            CustomCommands.TeleportPlayer(target, _ => { }, distant: false);
-            string pending = "";
+            // The game refuses a teleport while one is running and for 2 s after
+            // one finishes. A refused teleport is offered again every frame until
+            // the game takes it; only one the game accepted can bounce.
+            TeleportAnswer answer = CustomCommands.RequestTeleport(player, target, distant: false);
+            bool accepted = answer == TeleportAnswer.Accepted;
+            long acceptedMs = accepted ? 0 : -1;
+            string pending = accepted ? "" : "teleport refused: " + PlayerModes.DescribeRefusal(answer);
             while (clock.Elapsed.TotalSeconds < timeout && !ctx.Cancelled)
             {
+                if (!accepted && !PlayerModes.WorthRetrying(answer))
+                {
+                    ctx.Output($"ERROR: code=teleport_refused reason={PlayerModes.DescribeRefusal(answer)}");
+                    yield break;
+                }
                 yield return null;
                 Vector3 p = player.transform.position;
                 float dx = p.x - target.x, dz = p.z - target.z;
                 bool atTarget = dx * dx + dz * dz <= 4f;
-                if (player.IsTeleporting())
+                ArriveStep step = PlayerModes.NextArriveStep(accepted, player.IsTeleporting(), atTarget);
+                if (step == ArriveStep.Offer)
+                {
+                    answer = CustomCommands.RequestTeleport(player, target, distant: false);
+                    accepted = answer == TeleportAnswer.Accepted;
+                    if (accepted)
+                    {
+                        acceptedMs = clock.ElapsedMilliseconds;
+                    }
+                    pending = accepted ? "" : "teleport refused: " + PlayerModes.DescribeRefusal(answer);
+                    continue;
+                }
+                if (step == ArriveStep.InFlight)
                 {
                     pending = $"teleporting, player at {p.x:F1},{p.y:F1},{p.z:F1}";
                     continue;
                 }
-                if (!atTarget)
+                if (step == ArriveStep.Bounced)
                 {
                     // A non-distant teleport lands 2 s in, and if no floor answers the
                     // raycast yet (the zone's terrain collider is a frame behind its
                     // spawn) the game bounces the player back ("portal blocked"). The
-                    // zones are loaded by then, so the next attempt lands.
+                    // zones are loaded by then, so the next attempt lands. The game's
+                    // cooldown refuses it for 2 s; the Offer step waits that out.
                     pending = $"bounced back to {p.x:F1},{p.y:F1},{p.z:F1}";
                     if (retries >= 3)
                         break;
                     retries++;
-                    CustomCommands.TeleportPlayer(target, _ => { }, distant: false);
+                    accepted = false;
+                    answer = TeleportAnswer.Cooldown;
                     continue;
                 }
                 string zoneLine = "";
@@ -243,7 +267,7 @@ namespace valheimCLI
                         p = player.transform.position;
                         grounded = true;
                     }
-                    ctx.Output($"OK: ARRIVE position={p.x:F1},{p.y:F1},{p.z:F1} grounded={grounded} retries={retries} ms={clock.ElapsedMilliseconds} {zoneLine}");
+                    ctx.Output($"OK: ARRIVE position={p.x:F1},{p.y:F1},{p.z:F1} grounded={grounded} retries={retries} acceptedMs={acceptedMs} ms={clock.ElapsedMilliseconds} {zoneLine}");
                     yield break;
                 }
                 pending = zoneLine;
@@ -259,7 +283,7 @@ namespace valheimCLI
                 Cancelled(ctx, $"teleport settled after {settle.ElapsedMilliseconds} ms, player at {p.x:F1},{p.y:F1},{p.z:F1}");
                 yield break;
             }
-            ctx.Output($"ERROR: code=arrive_timeout retries={retries} ms={clock.ElapsedMilliseconds} pending={pending}");
+            ctx.Output($"ERROR: code={PlayerModes.ArriveTimeoutCode(acceptedMs >= 0)} retries={retries} ms={clock.ElapsedMilliseconds} pending={pending}");
         }
 
         // ---- cli_env ----
