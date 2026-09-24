@@ -171,7 +171,7 @@ public class TestRunner
         if (_launcher.IsGameRunning())
         {
             Log("Game is running, waiting for server...", ConsoleColor.Yellow);
-            bool ready = await _launcher.WaitForReadyAsync(timeout, cancellationToken);
+            bool ready = await WaitForPluginServerAsync(timeout, cancellationToken);
             if (ready)
             {
                 Log("Server ready", ConsoleColor.Green);
@@ -190,7 +190,7 @@ public class TestRunner
         }
 
         Log($"Waiting for game to be ready (timeout: {timeout.TotalSeconds}s)...", ConsoleColor.Gray);
-        bool isReady = await _launcher.WaitForReadyAsync(timeout, cancellationToken);
+        bool isReady = await WaitForPluginServerAsync(timeout, cancellationToken);
 
         if (isReady)
         {
@@ -200,6 +200,24 @@ public class TestRunner
 
         Log("Game did not become ready within timeout", ConsoleColor.Red);
         return false;
+    }
+
+    /// <summary>Waits for the plugin's port to answer, printing a heartbeat while the game starts.</summary>
+    private async Task<bool> WaitForPluginServerAsync(TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        GameStatus status = await _launcher.WaitForTargetAsync(
+            WaitTarget.PluginServer,
+            timeout,
+            _options.Interval,
+            cancellationToken,
+            _options.Progress,
+            LogHeartbeat);
+        return status.PluginServerReady;
+    }
+
+    private void LogHeartbeat(WaitHeartbeat beat)
+    {
+        Log($"    {beat.ToLine()}", ConsoleColor.DarkGray);
     }
 
     private bool QueueServerConnectIfRequested()
@@ -251,11 +269,11 @@ public class TestRunner
             // Handle wait condition
             if (testCase.WaitFor != null)
             {
-                bool waitSuccess = await HandleWaitConditionAsync(testCase.WaitFor, settings, cancellationToken);
-                if (!waitSuccess)
+                string waitFailure = await HandleWaitConditionAsync(testCase.WaitFor, cancellationToken);
+                if (waitFailure.Length > 0)
                 {
                     result.Result = TestResult.Failed;
-                    result.Message = $"Wait condition not met: state={testCase.WaitFor.State}";
+                    result.Message = waitFailure;
                     stopwatch.Stop();
                     result.Duration = stopwatch.Elapsed;
                     LogTestResult(result);
@@ -323,7 +341,8 @@ public class TestRunner
         return result;
     }
 
-    private async Task<bool> HandleWaitConditionAsync(WaitCondition condition, TestSettings settings, CancellationToken cancellationToken)
+    /// <summary>Returns "" when the wait condition is met, otherwise why it is not.</summary>
+    private async Task<string> HandleWaitConditionAsync(WaitCondition condition, CancellationToken cancellationToken)
     {
         // Display message if provided
         if (!string.IsNullOrEmpty(condition.Message))
@@ -331,11 +350,42 @@ public class TestRunner
             Log($"    Waiting: {condition.Message}", ConsoleColor.Yellow);
         }
 
-        // Handle state wait
+        // A readiness target (MainMenu, InWorld, ...) is watched through the full status:
+        // heartbeats, stall and unreachable detection, as with `valheim-cli wait`.
+        if (!string.IsNullOrEmpty(condition.State) && WaitTargets.TryParse(condition.State, out WaitTarget target))
+        {
+            if (!WaitPolicy.TryForPlanStep(
+                    condition.GetTimeoutSpan(),
+                    condition.Stall,
+                    condition.AllowUnreachable,
+                    _options.Stall,
+                    _options.AllowUnreachable,
+                    _options.Progress,
+                    out WaitPolicy policy,
+                    out string error))
+            {
+                return $"waitFor: {error}";
+            }
+
+            LogVerbose($"    Waiting for {WaitTargets.ToName(target)} (timeout {WaitDurations.Format(policy.Timeout)}, stall {WaitDurations.Format(policy.Stall)})");
+            WaitResult waited = await _launcher.WaitAsync(target, policy, _options.Interval, LogHeartbeat, cancellationToken);
+            if (waited.Outcome == WaitOutcome.Reached)
+            {
+                return "";
+            }
+
+            GameStatus status = waited.Status;
+            return $"Wait for {condition.State} failed: code={WaitTracker.ErrorCode(waited.Outcome)}; " +
+                   $"state={status.State} phase={status.LoadPhase} connection={status.ConnectionStatus}; " +
+                   (waited.Reason.Length > 0 ? waited.Reason : "not reached");
+        }
+
+        // Any other game state name (Loading, InWorldNoPlayer) is matched by name only.
         if (!string.IsNullOrEmpty(condition.State))
         {
             LogVerbose($"    Waiting for state: {condition.State}");
-            return await _client!.WaitForStateAsync(condition.State, condition.GetTimeoutSpan(), cancellationToken);
+            bool reached = await _client!.WaitForStateAsync(condition.State, condition.GetTimeoutSpan(), cancellationToken);
+            return reached ? "" : $"Wait condition not met: state={condition.State}";
         }
 
         // Handle custom event wait (extensible for future)
@@ -345,10 +395,10 @@ public class TestRunner
             // For now, just wait the timeout duration
             // This can be extended to support custom events
             await Task.Delay(condition.GetTimeoutSpan(), cancellationToken);
-            return true;
+            return "";
         }
 
-        return true;
+        return "";
     }
 
     private static bool IsLocalCommand(string command)
@@ -596,6 +646,12 @@ public class TestRunnerOptions
     public TimeSpan? LaunchTimeout { get; set; } = null;
     public string? ArtifactsDirectory { get; set; } = null;
     public bool Json { get; set; }
+
+    // Waits: poll interval, heartbeat interval, and the defaults a waitFor step can override
+    public TimeSpan Interval { get; set; } = TimeSpan.FromSeconds(2);
+    public TimeSpan Progress { get; set; } = WaitPolicy.DefaultProgress;
+    public TimeSpan? Stall { get; set; } = null;
+    public bool AllowUnreachable { get; set; } = false;
 
     // CLI variables (override YAML variables)
     public Dictionary<string, string> Variables { get; set; } = new();

@@ -16,6 +16,7 @@
     <Compile Include="../../CLI/Testing/ValheimClient.cs" Link="CLI/ValheimClient.cs" />
     <Compile Include="../../CLI/Testing/ConnectionDefaults.cs" Link="CLI/ConnectionDefaults.cs" />
     <Compile Include="../../CLI/Testing/CliModels.cs" Link="CLI/CliModels.cs" />
+    <Compile Include="../../CLI/Testing/WaitProgress.cs" Link="CLI/WaitProgress.cs" />
   </ItemGroup>
 
   <ItemGroup>

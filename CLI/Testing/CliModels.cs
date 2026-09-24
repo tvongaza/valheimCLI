@@ -101,6 +101,9 @@ public sealed class PluginLogInfo
     public bool Exists { get; set; }
     public bool PluginLoaded { get; set; }
     public int? Port { get; set; }
+
+    /// <summary>Log size in bytes when it was read; a growing log is a starting game's only sign of progress.</summary>
+    public long Length { get; set; }
 }
 
 public static class JsonOutput
@@ -113,9 +116,26 @@ public static class JsonOutput
         Converters = { new JsonStringEnumConverter() }
     };
 
+    private static readonly JsonSerializerOptions EventOptions = new()
+    {
+        WriteIndented = false,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Converters = { new JsonStringEnumConverter() }
+    };
+
     public static void Write(object value)
     {
         Console.WriteLine(JsonSerializer.Serialize(value, Options));
+    }
+
+    /// <summary>
+    /// One event as a single line on stderr, so stdout keeps exactly one JSON document
+    /// (the final result) while a long operation still reports as it goes.
+    /// </summary>
+    public static void WriteEvent(object value)
+    {
+        Console.Error.WriteLine(JsonSerializer.Serialize(value, EventOptions));
     }
 }
 

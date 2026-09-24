@@ -188,54 +188,76 @@ public class GameLauncher
     }
 
     /// <summary>
-    /// Wait for the game to be ready (TCP server accepting connections)
+    /// Waits for a readiness target under a timeout only (a rejected server connection
+    /// also ends it). Launch and join use this; heartbeats are printed when onHeartbeat is set.
     /// </summary>
-    public async Task<bool> WaitForReadyAsync(TimeSpan timeout, CancellationToken cancellationToken = default)
-    {
-        DateTime deadline = DateTime.Now.Add(timeout);
-        TimeSpan pollInterval = TimeSpan.FromSeconds(2);
-
-        while (DateTime.Now < deadline && !cancellationToken.IsCancellationRequested)
-        {
-            if (TryConnect())
-            {
-                return true;
-            }
-
-            await Task.Delay(pollInterval, cancellationToken);
-        }
-
-        return false;
-    }
-
     public async Task<GameStatus> WaitForTargetAsync(
         WaitTarget target,
         TimeSpan timeout,
         TimeSpan interval,
+        CancellationToken cancellationToken = default,
+        TimeSpan? progress = null,
+        Action<WaitHeartbeat>? onHeartbeat = null)
+    {
+        WaitPolicy policy = WaitPolicy.TimeoutOnly(timeout, onHeartbeat != null ? progress ?? WaitPolicy.DefaultProgress : TimeSpan.Zero);
+        WaitResult result = await WaitAsync(target, policy, interval, onHeartbeat, cancellationToken);
+        return result.Status;
+    }
+
+    /// <summary>
+    /// Polls the status every interval and lets a WaitTracker decide: reached, timed out,
+    /// stalled or unreachable. Each observation is stamped with the moment the status was
+    /// asked for, because a game whose main thread is busy answers late.
+    /// </summary>
+    public async Task<WaitResult> WaitAsync(
+        WaitTarget target,
+        WaitPolicy policy,
+        TimeSpan interval,
+        Action<WaitHeartbeat>? onHeartbeat = null,
         CancellationToken cancellationToken = default)
     {
-        DateTime deadline = DateTime.Now.Add(timeout);
-        GameStatus last = GetStatus();
-
-        while (DateTime.Now < deadline && !cancellationToken.IsCancellationRequested)
+        DateTime start = DateTime.Now;
+        WaitTracker tracker = new WaitTracker(target, policy, start);
+        GameStatus status;
+        WaitStep step;
+        while (true)
         {
-            last = GetStatus();
-            if (last.Satisfies(target))
+            DateTime observedAt = DateTime.Now;
+            status = GetStatus();
+            step = tracker.Observe(status, observedAt);
+            if (step.Heartbeat != null)
             {
-                return last;
+                onHeartbeat?.Invoke(step.Heartbeat);
             }
 
-            if (target == WaitTarget.ServerConnected && last.HasUnrecoverableConnectionFailure)
+            if (step.Outcome != WaitOutcome.Waiting || cancellationToken.IsCancellationRequested)
             {
-                return last;
+                break;
             }
 
-            await Task.Delay(interval, cancellationToken);
+            TimeSpan left = start + policy.Timeout - DateTime.Now;
+            TimeSpan delay = left < interval ? left : interval;
+            if (delay > TimeSpan.Zero)
+            {
+                await Task.Delay(delay, cancellationToken);
+            }
         }
 
-        last.WaitTimedOut = true;
-        last.WaitTargetName = WaitTargets.ToName(target);
-        return last;
+        if (step.Outcome != WaitOutcome.Reached)
+        {
+            status.WaitTimedOut = step.Outcome == WaitOutcome.TimedOut || step.Outcome == WaitOutcome.Waiting;
+            status.WaitTargetName = WaitTargets.ToName(target);
+        }
+
+        return new WaitResult
+        {
+            Outcome = step.Outcome == WaitOutcome.Waiting ? WaitOutcome.TimedOut : step.Outcome,
+            Reason = step.Reason,
+            Status = status,
+            Elapsed = tracker.Elapsed,
+            Unchanged = tracker.Unchanged,
+            Heartbeats = tracker.Heartbeats
+        };
     }
 
     public async Task<JoinResult> JoinDirectAsync(
@@ -245,10 +267,12 @@ public class GameLauncher
         bool createCharacter,
         TimeSpan timeout,
         TimeSpan interval,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        TimeSpan? progress = null,
+        Action<WaitHeartbeat>? onHeartbeat = null)
     {
         JoinResult result = new() { Server = server };
-        GameStatus terminalStatus = await WaitForTargetAsync(WaitTarget.Terminal, timeout, interval, cancellationToken);
+        GameStatus terminalStatus = await WaitForTargetAsync(WaitTarget.Terminal, timeout, interval, cancellationToken, progress, onHeartbeat);
         if (!terminalStatus.Satisfies(WaitTarget.Terminal))
         {
             result.ErrorCode = terminalStatus.WaitTimedOut ? "timeout" : terminalStatus.DiagnosticCode;
@@ -268,7 +292,7 @@ public class GameLauncher
 
         if (!string.IsNullOrWhiteSpace(character))
         {
-            GameStatus menuStatus = await WaitForTargetAsync(WaitTarget.MainMenu, timeout, interval, cancellationToken);
+            GameStatus menuStatus = await WaitForTargetAsync(WaitTarget.MainMenu, timeout, interval, cancellationToken, progress, onHeartbeat);
             if (!menuStatus.Satisfies(WaitTarget.MainMenu))
             {
                 result.ErrorCode = menuStatus.WaitTimedOut ? "timeout" : menuStatus.DiagnosticCode;
@@ -315,7 +339,7 @@ public class GameLauncher
             return result;
         }
 
-        GameStatus connectedStatus = await WaitForTargetAsync(WaitTarget.ServerConnected, timeout, interval, cancellationToken);
+        GameStatus connectedStatus = await WaitForTargetAsync(WaitTarget.ServerConnected, timeout, interval, cancellationToken, progress, onHeartbeat);
         result.FinalStatus = connectedStatus;
         if (connectedStatus.Satisfies(WaitTarget.ServerConnected))
         {
@@ -415,6 +439,7 @@ public class GameLauncher
                     Port = _port,
                     State = state,
                     LoadPhase = GetDetail(statusDetails, "phase"),
+                    ShuttingDown = GetBoolDetail(statusDetails, "shuttingDown"),
                     LocationsGenerated = GetBoolDetail(statusDetails, "locationsGenerated"),
                     LocationProgress = GetFloatDetail(statusDetails, "locationProgress"),
                     EstimatedLocationSeconds = GetFloatDetail(statusDetails, "estimatedLocationSeconds"),
@@ -494,6 +519,7 @@ public class GameLauncher
             using (StreamReader reader = new StreamReader(stream))
             {
                 text = reader.ReadToEnd();
+                info.Length = stream.Length;
             }
             MatchCollection matches = Regex.Matches(text, @"valheimCLI loaded\. CLI server on port (?<port>\d+)", RegexOptions.IgnoreCase);
             if (matches.Count == 0)
@@ -537,6 +563,9 @@ public class GameStatus
     public int Port { get; set; }
     public string State { get; set; } = "Unknown";
     public string LoadPhase { get; set; } = "";
+
+    /// <summary>The world is being shut down (a logout is under way); false from a plugin that does not report it.</summary>
+    public bool ShuttingDown { get; set; }
     public bool LocationsGenerated { get; set; }
     public float LocationProgress { get; set; }
     public float EstimatedLocationSeconds { get; set; }
@@ -637,6 +666,16 @@ public class GameStatus
         string connectionStatus = IsConnected ? "Connected" : "Not connected";
         return $"Game: {runningStatus}, Server: {connectionStatus} ({Host}:{Port}), State: {State}";
     }
+}
+
+public class WaitResult
+{
+    public WaitOutcome Outcome { get; set; }
+    public string Reason { get; set; } = "";
+    public GameStatus Status { get; set; } = new();
+    public TimeSpan Elapsed { get; set; }
+    public TimeSpan Unchanged { get; set; }
+    public List<WaitHeartbeat> Heartbeats { get; set; } = new();
 }
 
 public class JoinResult
