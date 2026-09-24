@@ -4223,17 +4223,45 @@ namespace valheimCLI
                 return;
             }
 
-            ItemDrop.ItemData? item = FindInventoryItem(player.GetInventory(), requestedName);
-            if (item == null)
+            // An equipped match is preferred, so a second copy of the item
+            // in hand is never swapped in (see ItemSelection).
+            List<ItemDrop.ItemData> items = player.GetInventory().GetAllItems();
+            string requested = requestedName.Trim();
+            List<ItemMatch> matches = items.Select(candidate => MatchItem(candidate, requested)).ToList();
+            List<bool> equippedFlags = items.Select(candidate => player.IsItemEquiped(candidate)).ToList();
+            int index = ItemSelection.Choose(matches, equippedFlags);
+            if (index < 0)
             {
                 addOutput($"ERROR: No inventory item matching '{requestedName}'");
                 return;
             }
 
-            bool equipped = player.EquipItem(item);
-            addOutput(equipped
-                ? $"OK: equipped item prefab={GetItemPrefabName(item)} name={item.m_shared.m_name} type={item.m_shared.m_itemType}"
-                : $"ERROR: Equip failed prefab={GetItemPrefabName(item)} name={item.m_shared.m_name} type={item.m_shared.m_itemType}");
+            ItemDrop.ItemData item = items[index];
+            // Humanoid.EquipItem returns false for an item already equipped;
+            // that is the state asked for, so it is reported, not toggled.
+            bool already = equippedFlags[index];
+            bool accepted = !already && player.EquipItem(item);
+            addOutput($"{ItemSelection.ReplyPrefix(already, accepted)} prefab={GetItemPrefabName(item)} name={item.m_shared.m_name} type={item.m_shared.m_itemType} already={already}");
+        }
+
+        private static ItemMatch MatchItem(ItemDrop.ItemData item, string requested)
+        {
+            string prefabName = GetItemPrefabName(item);
+            string token = item.m_shared.m_name;
+            string display = Localization.instance.Localize(token);
+            if (prefabName.Equals(requested, StringComparison.OrdinalIgnoreCase) ||
+                token.Equals(requested, StringComparison.OrdinalIgnoreCase) ||
+                display.Equals(requested, StringComparison.OrdinalIgnoreCase))
+            {
+                return ItemMatch.Exact;
+            }
+            if (prefabName.IndexOf(requested, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                token.IndexOf(requested, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                display.IndexOf(requested, StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return ItemMatch.Partial;
+            }
+            return ItemMatch.None;
         }
 
         public static void ApplyMagicEffect(string requestedItemName, string effectType, string rarityName, float effectValue, Action<string> addOutput)

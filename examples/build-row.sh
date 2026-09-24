@@ -12,8 +12,8 @@
 # the piece's width is close enough (wood_floor is 2 m).
 #
 # The spot must be near the player (its terrain loaded), for example after
-# goto-and-look.sh. The script equips a hammer, giving one if the inventory has
-# none, and builds in no-cost mode, which stays on afterwards
+# goto-and-look.sh. The script equips a hammer, giving one only if the inventory
+# has none, and builds in no-cost mode, which stays on afterwards
 # (cli_build_nocost false). Set BUILD_ROW_COST=1 to pay for the pieces instead.
 # A piece already standing where one would go stops the run with
 # ERROR: code=occupied, so a second run does not stack a duplicate row.
@@ -60,9 +60,17 @@ run() {
 }
 
 # The placement commands take pieces from the equipped build tool's table.
-if ! "$cli" --port "$port" cli_equip_item Hammer >/dev/null 2>&1; then
-  run cli_give_item Hammer
-  run cli_equip_item Hammer
+# cli_equip_item answers OK (already=True) for a hammer already in hand, so a
+# hammer is given only when the inventory has none; any other refusal stops.
+code=0
+equip=$("$cli" --port "$port" cli_equip_item Hammer 2>&1) || code=$?
+if [ "$code" -ne 0 ]; then
+  case "$equip" in
+    *"No inventory item matching"*) run cli_give_item Hammer; run cli_equip_item Hammer ;;
+    *) printf '%s\n' "$equip" >&2; exit "$code" ;;
+  esac
+else
+  printf '%s\n' "$equip"
 fi
 
 placed_at() {

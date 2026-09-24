@@ -75,7 +75,11 @@ another piece, behind a wall. These commands take the transform directly.
 `<piece>` is a prefab or display name from the equipped build tool's table
 (`cli_build_list`), or `selected` for the piece chosen with `cli_build_select`.
 Equip a hammer first (`cli_give_item Hammer`, `cli_equip_item Hammer`); without
-one the reply is an `ERROR` naming what is equipped. `nocost` switches the
+one the reply is an `ERROR` naming what is equipped. `cli_equip_item` replies
+`OK: equipped item … already=True` for an item already in hand (the game's own
+equip call refuses that, which used to read as `Equip failed`), prefers the
+equipped copy when the inventory holds two, and is an `ERROR` only when the game
+refuses a real equip. Give a hammer only when it answers `No inventory item`. `nocost` switches the
 player's no-cost mode on, as `cli_build_nocost true` does, and it stays on.
 
 Both call `Player.PlacePiece`, the call the hammer makes once its own checks
