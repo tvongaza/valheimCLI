@@ -2,9 +2,8 @@
 
 Small scripts for the jobs a mod developer repeats: build and test a mod,
 wait for the game to say something, read what went wrong, reach a game on
-another machine. Each one is self-contained bash (macOS's bash 3.2 is
-enough) with its usage in its header; copy them into your own project and
-change what you need.
+another machine, see a world. Each one is self-contained, with its usage
+in its header; copy them into your own project and change what you need.
 
 | Script | What it does |
 | --- | --- |
@@ -12,9 +11,13 @@ change what you need.
 | [wait-for-log.sh](wait-for-log.sh) | Return the moment a line matching a regex is written to the BepInEx log |
 | [log-summary.sh](log-summary.sh) | Count warnings and errors by source and by message; optionally fail on them |
 | [remote-tunnel.sh](remote-tunnel.sh) | Open, check or close an SSH tunnel to a game on another machine |
+| [world-map.py](world-map.py) | Draw a `cli_world_dump` as an SVG map (biomes, water, contours, locations) with your own paths and points on top |
 
 ## Conventions
 
+- **Bash or Python 3.** The shell scripts need only bash 3.2; `world-map.py`
+  needs only Python 3.8+ and its standard library, and reads CSV files, so
+  it runs anywhere the dump has been copied to.
 - **Local first.** Every script works against the game on this machine
   with no configuration when Valheim is in the default Steam folder.
 - **Environment**, the same names in every script:
