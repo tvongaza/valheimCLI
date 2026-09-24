@@ -31,6 +31,15 @@ public sealed class CommandResult
     public string Message { get; set; } = "";
     public List<string> Output { get; set; } = new();
 
+    /// <summary>
+    /// The process exit code for this result: a connection that closed before
+    /// the answer (the server stopped, or a live reload replaced valheimCLI) is
+    /// a connection failure, so a script can reconnect rather than give up.
+    /// </summary>
+    public int ExitCode => Ok ? (int)CliExitCode.Success
+        : ErrorCode == ConnectionLoss.ErrorCode ? (int)CliExitCode.ConnectionFailure
+        : (int)CliExitCode.CommandFailure;
+
     public static CommandResult FromOutput(string command, List<string> output)
     {
         string message = output.Count > 0 ? output[0] : "";
@@ -50,6 +59,11 @@ public sealed class CommandResult
         foreach (string line in output)
         {
             string lower = line.ToLowerInvariant();
+            if (lower.StartsWith("error: code=" + ConnectionLoss.ErrorCode))
+            {
+                return ConnectionLoss.ErrorCode;
+            }
+
             if (lower.Contains("no local player found"))
             {
                 return "player_not_loaded";

@@ -92,6 +92,11 @@ public class ValheimClient : IDisposable
         _stream?.Dispose();
         _client?.Close();
         _client = null;
+        // Dropped so a caller's finally does not touch a disposed stream and the
+        // next call reports "Not connected" instead of writing to a dead socket.
+        _stream = null;
+        _reader = null;
+        _writer = null;
     }
 
     public string GetState()
@@ -231,13 +236,24 @@ public class ValheimClient : IDisposable
             {
                 line = _reader!.ReadLine();
             }
+            catch (IOException ex) when (!ConnectionLoss.IsReadTimeout(ex))
+            {
+                line = null;
+            }
             catch (IOException)
             {
                 result.Add($"ERROR: code=client_timeout message=no response within {(CommandTimeout + ResponseAllowance).TotalSeconds:F0}s; the command was not resent (it may have executed); check the server is a valheimCLI with command completion");
                 Disconnect();
                 return result;
             }
-            if (line == null) break;
+            if (line == null)
+            {
+                // The server closed the connection before answering: it stopped,
+                // or a live reload replaced it. Never report that as success.
+                result.Add(ConnectionLoss.Line(command));
+                Disconnect();
+                return result;
+            }
 
             // Handle state change notifications
             if (TryHandleStateChange(line))
@@ -250,13 +266,13 @@ public class ValheimClient : IDisposable
                 {
                     for (int i = 0; i < count; i++)
                     {
-                        string? outputLine = _reader.ReadLine();
+                        string? outputLine = _reader!.ReadLine();
                         if (outputLine != null)
                             result.Add(outputLine);
                     }
                 }
                 // Read END_OUTPUT marker
-                _reader.ReadLine();
+                _reader!.ReadLine();
                 break;
             }
         }

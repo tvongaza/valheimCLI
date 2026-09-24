@@ -1,8 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- The broker is plain .NET (no Unity, no sockets): compiled here from the mod source. -->
+    <!-- Plain .NET files (no Unity) compiled here from the mod and CLI sources. -->
     <TargetFramework>net10.0</TargetFramework>
+    <!-- The CLI client files are written against implicit usings, as the CLI project is. -->
+    <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <RootNamespace>valheimCLI.Tests</RootNamespace>
@@ -12,6 +14,10 @@
     <Compile Include="../../Source/RequestBroker.cs" Link="Source/RequestBroker.cs" />
     <Compile Include="../../Source/OperationGate.cs" Link="Source/OperationGate.cs" />
     <Compile Include="../../Source/LiveReload.cs" Link="Source/LiveReload.cs" />
+    <Compile Include="../../CLI/Testing/ValheimClient.cs" Link="CLI/ValheimClient.cs" />
+    <Compile Include="../../CLI/Testing/CliModels.cs" Link="CLI/CliModels.cs" />
+    <Compile Include="../../CLI/Testing/ConnectionDefaults.cs" Link="CLI/ConnectionDefaults.cs" />
+    <Compile Include="../../CLI/Testing/ConnectionLoss.cs" Link="CLI/ConnectionLoss.cs" />
   </ItemGroup>
 
   <ItemGroup>

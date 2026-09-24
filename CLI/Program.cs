@@ -709,7 +709,7 @@ class Program
             {
                 Console.Error.WriteLine($"Cannot connect to Valheim at {_host}:{_port}");
                 Console.Error.WriteLine("Make sure Valheim is running with the valheimCLI mod loaded.");
-                return 1;
+                return (int)CliExitCode.ConnectionFailure;
             }
 
             CommandResult result = client.ExecuteCommand(command);
@@ -719,19 +719,19 @@ class Program
                 {
                     ok = result.Ok,
                     command = result.Command,
-                    state = client.GetState(),
+                    state = client.IsConnected ? client.GetState() : "Unknown",
                     message = result.Message,
                     errorCode = result.ErrorCode,
                     output = result.Output
                 });
-                return result.Ok ? 0 : (int)CliExitCode.CommandFailure;
+                return result.ExitCode;
             }
 
             foreach (string line in result.Output)
             {
                 Console.WriteLine(line);
             }
-            return result.Ok ? 0 : 1;
+            return result.ExitCode;
         }
         catch (Exception ex)
         {
