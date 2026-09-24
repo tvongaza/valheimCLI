@@ -14,6 +14,7 @@
     <Compile Include="../../Source/OperationGate.cs" Link="Source/OperationGate.cs" />
     <Compile Include="../../Source/CommandArguments.cs" Link="Source/CommandArguments.cs" />
     <Compile Include="../../Source/ContainerLookup.cs" Link="Source/ContainerLookup.cs" />
+    <Compile Include="../../Source/SceneInspection.cs" Link="Source/SceneInspection.cs" />
     <Compile Include="../../CLI/Testing/CommandInfo.cs" Link="CLI/CommandInfo.cs" />
     <Compile Include="../../CLI/Testing/CommandMetadata.cs" Link="CLI/CommandMetadata.cs" />
     <Compile Include="../../CLI/Testing/CliModels.cs" Link="CLI/CliModels.cs" />

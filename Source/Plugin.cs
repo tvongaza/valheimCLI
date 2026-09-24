@@ -54,6 +54,7 @@ namespace valheimCLI
             CustomCommands.Register();
             WorldInspectionCommands.Register();
             TerrainInspectionCommands.Register();
+            RockInspectionCommands.Register();
 
             // Initialize state tracker
             _stateTracker = new GameStateTracker(Log);

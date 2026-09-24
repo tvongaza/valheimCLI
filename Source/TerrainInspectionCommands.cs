@@ -28,6 +28,232 @@ namespace valheimCLI
             {
                 PaintAt(args, args.Context.AddString);
             });
+
+            new Terminal.ConsoleCommand("cli_solids_over", "Every solid object standing over a set of points, by the game's own overlap test against the real collider shapes (not their bounding boxes): a column <half> metres to each side of every point, from <from> to <to> metres above it. A breakable boulder's piece is named by its index: cli_solids_over <half> <from> <to> <x1> <y1> <z1> [<x2> <y2> <z2> ...]", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            {
+                SolidsOver(args, args.Context.AddString);
+            });
+
+            new Terminal.ConsoleCommand("cli_area_ready", "Whether the game counts the area round a point as ready (its zone loaded and every saved object in it and its neighbours instantiated), and which objects are still without an instance: cli_area_ready <x> <z> [list=10]", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            {
+                AreaReady(args, args.Context.AddString);
+            });
+
+            new Terminal.ConsoleCommand("cli_piece_support", "What holds each build piece near a point up, as the game currently has it: the support it has, the most and least it can have, and whether the game has computed it yet: cli_piece_support <x> <z> [radius=30] [nameFilter]", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            {
+                PieceSupport(args, args.Context.AddString);
+            });
+        }
+
+        /// <summary>
+        /// What can stand in the way of a player or a placed piece: static
+        /// objects, pieces, rocks and trees. Not terrain, water or characters.
+        /// </summary>
+        private static int SolidMask => LayerMask.GetMask("Default", "static_solid", "Default_small", "piece", "vehicle");
+
+        public static void SolidsOver(Terminal.ConsoleEventArgs args, Action<string> output)
+        {
+            if (!SolidsOverRequest.TryParse(args.Args, out SolidsOverRequest request))
+            {
+                output(SolidsOverRequest.Usage);
+                return;
+            }
+            if (ZNetScene.instance == null)
+            {
+                output("ERROR: no world loaded");
+                return;
+            }
+
+            // One box per point. Physics.OverlapBox tests the collider shapes
+            // themselves, so a boulder's box that spans the point but whose
+            // rock does not is not reported.
+            Collider[] hits = new Collider[256];
+            Dictionary<Collider, int> firstPoint = new Dictionary<Collider, int>();
+            Dictionary<Collider, int> points = new Dictionary<Collider, int>();
+            Vector3 extents = new Vector3(request.Half, request.HalfHeight, request.Half);
+            for (int i = 0; i < request.Points.Count; i++)
+            {
+                float[] c = request.Centre(i);
+                Vector3 centre = new Vector3(c[0], c[1], c[2]);
+                int n = Physics.OverlapBoxNonAlloc(centre, extents, hits, Quaternion.identity, SolidMask, QueryTriggerInteraction.Ignore);
+                // A full buffer may have dropped colliders: grow it and ask again.
+                while (n == hits.Length)
+                {
+                    hits = new Collider[hits.Length * 2];
+                    n = Physics.OverlapBoxNonAlloc(centre, extents, hits, Quaternion.identity, SolidMask, QueryTriggerInteraction.Ignore);
+                }
+                for (int h = 0; h < n; h++)
+                {
+                    Collider collider = hits[h];
+                    if (!firstPoint.ContainsKey(collider))
+                    {
+                        firstPoint[collider] = i;
+                        points[collider] = 0;
+                    }
+                    points[collider]++;
+                }
+            }
+
+            List<KeyValuePair<Collider, int>> ordered = new List<KeyValuePair<Collider, int>>(firstPoint);
+            ordered.Sort((a, b) =>
+            {
+                if (a.Value != b.Value) return a.Value.CompareTo(b.Value);
+                int byName = string.CompareOrdinal(RockInspectionCommands.PrefabName(a.Key.gameObject), RockInspectionCommands.PrefabName(b.Key.gameObject));
+                return byName != 0 ? byName : string.CompareOrdinal(a.Key.name, b.Key.name);
+            });
+            foreach (KeyValuePair<Collider, int> entry in ordered)
+            {
+                Collider collider = entry.Key;
+                string piece = "";
+                MineRock5 rock = collider.GetComponentInParent<MineRock5>();
+                if (rock != null && rock.m_hitAreas != null)
+                {
+                    for (int i = 0; i < rock.m_hitAreas.Count; i++)
+                    {
+                        if (rock.m_hitAreas[i].m_collider == collider)
+                        {
+                            piece = FormattableString.Invariant($" piece={i} health={rock.m_hitAreas[i].m_health:F1}");
+                            break;
+                        }
+                    }
+                }
+                float[] first = request.Points[entry.Value];
+                output(FormattableString.Invariant(
+                    $"SOLID name={RockInspectionCommands.PrefabName(collider.gameObject)}{piece} collider={collider.name.Replace(' ', '_')} layer={LayerMask.LayerToName(collider.gameObject.layer)} points={points[collider]} first={first[0]:F1},{first[2]:F1} top={collider.bounds.max.y:F2} {RockInspectionCommands.Zdo(collider.gameObject)}"));
+            }
+            output(FormattableString.Invariant($"OK: SOLIDS_OVER points={request.Points.Count} half={request.Half:F2} from={request.From:F2} to={request.To:F2} solids={firstPoint.Count}"));
+        }
+
+        public static void AreaReady(Terminal.ConsoleEventArgs args, Action<string> output)
+        {
+            const string usage = "Usage: cli_area_ready <x> <z> [list=10]";
+            if (args.Length < 3 || args.Length > 4 || !CommandArguments.TryFiniteFloat(args[1], out float x) || !CommandArguments.TryFiniteFloat(args[2], out float z))
+            {
+                output(usage);
+                return;
+            }
+            int list = 10;
+            if (args.Length >= 4 && !CommandArguments.TryCount(args[3], 1000, out list))
+            {
+                output(usage);
+                return;
+            }
+            if (!CommandArguments.CanScan(x, z, 0f))
+            {
+                output("ERROR: census coordinates exceed the supported sector range");
+                return;
+            }
+            if (ZNetScene.instance == null || ZoneSystem.instance == null || ZDOMan.instance == null)
+            {
+                output("ERROR: no world loaded");
+                return;
+            }
+
+            Vector3 point = new Vector3(x, 0f, z);
+            Vector2s zone = ZoneSystem.GetZone(point);
+            bool loaded = ZoneSystem.instance.IsZoneLoaded(zone);
+            // The same sweep ZNetScene.IsAreaReady makes: the zone and its eight
+            // neighbours, counting only objects whose prefab this game knows.
+            List<ZDO> zdos = new List<ZDO>();
+            ZDOMan.instance.FindSectorObjects(zone, new SimulationDistance(1, 0), zdos);
+            int known = 0, missing = 0;
+            foreach (ZDO zdo in zdos)
+            {
+                GameObject? prefab = zdo.GetPrefab() != 0 ? ZNetScene.instance.GetPrefab(zdo.GetPrefab()) : null;
+                if (prefab == null) continue;
+                known++;
+                if (ZNetScene.instance.FindInstance(zdo)) continue;
+                missing++;
+                if (missing <= list)
+                {
+                    Vector3 p = zdo.GetPosition();
+                    Vector2s at = ZoneSystem.GetZone(p);
+                    output(FormattableString.Invariant($"MISSING_INSTANCE name={prefab.name} zdo={zdo.m_uid} pos={p.x:F1},{p.y:F1},{p.z:F1} zone={at.x},{at.y} distant={zdo.Distant} owner={zdo.GetOwner()}"));
+                }
+            }
+            output(FormattableString.Invariant($"OK: AREA_READY {x:F1},{z:F1} ready={ZNetScene.instance.IsAreaReady(point)} zone={zone.x},{zone.y} loaded={loaded} objects={known} without_instance={missing}"));
+        }
+
+        /// <summary>
+        /// Report the structural support the game holds for each build piece
+        /// near a point, without recomputing it.
+        ///
+        /// Support decides whether a structure stands, and without this it can
+        /// only be inferred by building, waiting and looking at what fell, which
+        /// is slow and confounded by falling debris damaging what is beneath.
+        /// The reply is the number the game will act on next: WearNTear.GetSupport
+        /// and the material's limits, with a state that says where the number
+        /// came from (see PieceSupportReading.State). Nothing is recomputed:
+        /// UpdateSupport writes the result to the piece's ZDO and can ask other
+        /// owners to drop cached support, so calling it would change the world
+        /// being inspected. The game recomputes every owned piece about once a
+        /// second, in its own order, each piece from its neighbours' current
+        /// values; support can take several passes to travel up a tall stack,
+        /// so reading twice a few seconds apart shows whether it has settled.
+        /// </summary>
+        public static void PieceSupport(Terminal.ConsoleEventArgs args, Action<string> output)
+        {
+            if (!PieceSupportReading.TryParse(args.Args, out float x, out float z, out float radius, out string? filter))
+            {
+                output(PieceSupportReading.Usage);
+                return;
+            }
+            if (!CommandArguments.CanScan(x, z, radius))
+            {
+                output("ERROR: census coordinates exceed the supported sector range");
+                return;
+            }
+            if (ZNetScene.instance == null)
+            {
+                output("ERROR: no world loaded");
+                return;
+            }
+
+            List<WearNTear> found = new List<WearNTear>();
+            foreach (WearNTear wear in WearNTear.GetAllInstances())
+            {
+                if (wear == null || wear.m_nview == null)
+                {
+                    continue;
+                }
+                Vector3 p = wear.transform.position;
+                if ((p.x - x) * (p.x - x) + (p.z - z) * (p.z - z) > radius * radius)
+                {
+                    continue;
+                }
+                string name = RockInspectionCommands.PrefabName(wear.gameObject);
+                if (filter != null && name.IndexOf(filter, StringComparison.OrdinalIgnoreCase) < 0)
+                {
+                    continue;
+                }
+                found.Add(wear);
+            }
+            found.Sort((a, b) =>
+            {
+                Vector3 pa = a.transform.position, pb = b.transform.position;
+                return SceneGeometry.CompareBottomUp(pa.x, pa.y, pa.z, pb.x, pb.y, pb.z);
+            });
+
+            int held = 0, pending = 0;
+            float now = Time.time;
+            foreach (WearNTear wear in found)
+            {
+                ZNetView view = wear.m_nview;
+                bool valid = view.IsValid();
+                string state = PieceSupportReading.State(valid, valid && view.HasOwner(), valid && view.IsOwner(),
+                    wear.m_noSupportWear, wear.m_createTime, now, wear.m_addPreSnow);
+                float support = wear.GetSupport();
+                float minimum = wear.GetMinSupport();
+                if (PieceSupportReading.Held(support, minimum)) held++;
+                if (state == "pending") pending++;
+                Vector3 p = wear.transform.position;
+                float health = valid ? view.GetZDO().GetFloat(ZDOVars.s_health, wear.m_health) : wear.m_health;
+                output(PieceSupportReading.Row(RockInspectionCommands.PrefabName(wear.gameObject),
+                    valid ? view.GetZDO().m_uid.ToString() : "none", p.x, p.y, p.z,
+                    support, wear.GetMaxSupport(), minimum, state,
+                    PieceSupportReading.PendingSeconds(wear.m_createTime, now, wear.m_addPreSnow), health));
+            }
+            output(PieceSupportReading.Summary(x, z, radius, found.Count, held, pending));
         }
 
         public static void GroundHeights(Terminal.ConsoleEventArgs args, Action<string> output)

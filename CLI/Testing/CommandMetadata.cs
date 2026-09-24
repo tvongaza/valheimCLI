@@ -41,7 +41,8 @@ public static class CommandMetadata
             return "server-world";
         }
 
-        if (name is "cli_ground_height" or "cli_surface_at" or "cli_paint_at" or "cli_piece_geometry" or "cli_prefabs_at")
+        if (name is "cli_ground_height" or "cli_surface_at" or "cli_paint_at" or "cli_piece_geometry" or "cli_prefabs_at"
+            or "cli_solids_over" or "cli_area_ready" or "cli_piece_support" or "cli_rocks_at" or "cli_rock_health")
         {
             return "loaded-world";
         }
