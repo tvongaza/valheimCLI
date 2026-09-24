@@ -167,6 +167,14 @@ Generic wrappers live under `scripts/`:
 
 Configure hosts, executable paths, and game paths with environment variables or script parameters. Do not put real passwords in commands; use `--password-file`.
 
+## Examples
+
+[`examples/`](examples/README.md) holds small scripts for a mod's development
+loop: build, install, launch and run a plan in one step; wait for a log line;
+summarise a run's warnings and errors; tunnel to a game on another machine.
+They run against the local game by default and against a remote one through
+the tunnel.
+
 ## Config
 
 `BepInEx/config/valheimCLI.valheimCLI.cfg`:
