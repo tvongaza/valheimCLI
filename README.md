@@ -101,6 +101,7 @@ snapshots a working game into a file and checks later runs against it:
 valheim-cli manifest --write pins.txt --with-world   # every plugin by GUID=md5, plus the world
 valheim-cli --expect-strict pins.txt                  # exit 6 with the differences if the game drifted
 valheim-cli --expect pins.txt spawn Boar 5            # run a command only on the expected game
+valheim-cli --expect-strict pins.txt --test plan.yaml # run a test plan only on the expected game
 ```
 
 Set `[Expectations] File` in the config and the game refuses every CLI command
@@ -163,7 +164,7 @@ Exit codes:
 - `3`: connection failure
 - `4`: bad input
 - `5`: game not ready
-- `6`: the game does not match an `--expect` file
+- `6`: the game does not match an `--expect` file (or a plan's `game.expect` file)
 
 ## Test Layout And Artifacts
 

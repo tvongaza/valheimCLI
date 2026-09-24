@@ -12,8 +12,14 @@
 # edit a line to `any` when that plugin's build does not matter, or add
 # `name=absent` for a plugin that must not be loaded. See docs/expectations.md.
 #
-# Typical use: snapshot once on a game that works, commit the file next to your
-# tests, and start every test script with `pin-mods.sh check FILE --strict`.
+# Typical use: snapshot once from a known-good setup, commit the file next to
+# your tests, and check it at the start of every run:
+#
+#   pin-mods.sh snapshot pins.txt                          # once
+#   valheim-cli --expect-strict pins.txt --test plan.yaml  # every run: exit 6,
+#                                                          # no step run, on drift
+#
+# A test script that is not a plan starts with `pin-mods.sh check FILE --strict`.
 # To make the game itself refuse drifted runs, point [Expectations] File in
 # BepInEx/config/valheimCLI.valheimCLI.cfg at the same file.
 #

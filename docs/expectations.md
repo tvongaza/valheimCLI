@@ -113,8 +113,8 @@ valheim-cli --expect-strict pins.txt          # strict mode (below)
 ```
 
 Exit code 6 means the game does not match the file; 4 means the file itself
-is missing or malformed. `--expect` applies to single commands and to a bare
-`--expect` check; use a `cli_expect` step inside YAML test plans.
+is missing or malformed. `--expect` applies to single commands, to a bare
+`--expect` check and to test plans (below).
 
 ## Strict mode
 
@@ -130,6 +130,51 @@ In strict mode it is a lock file:
 
 A snapshot from `manifest --write` always passes strict mode on the game it
 came from.
+
+## Strict in a test plan
+
+Snapshot once, from a setup you know is good, and check every run of a plan
+against it:
+
+```bash
+examples/pin-mods.sh snapshot pins.txt              # once: valheim-cli manifest --write pins.txt
+valheim-cli --expect-strict pins.txt --test plan.yaml
+```
+
+The check runs once, when the game first answers and before the first step;
+with `--launch`, that is when the launched game's valheimCLI server is up.
+When it holds, the run prints `Expectations held (...)` and goes on. When it
+does not, no step and no cleanup runs: the run prints the `MISMATCH` lines
+and exits 6. A missing or malformed file stops the run before the game is
+launched or asked anything, with exit 4. A game that does not answer
+`cli_expect` (an older valheimCLI) fails the check too: a run is only called
+pinned when the game said so.
+
+```text
+Expectations MISMATCH (pins.txt, strict, from --expect-strict); no step ran
+  MISMATCH com.example.mymod: md5 5f2b0c6e, expected 11111111 (MyMod.dll)
+  MISMATCH com.example.extra: loaded but not listed (strict), md5 9d8c7b6a (Extra.dll)
+  ERROR: code=expectation_mismatch mismatches=2
+```
+
+The run's `transcript.txt` starts with the same lines, and `summary.json`
+has an `Expectations` object (file, strict, where it came from, outcome and
+the game's reply). With several plans (`--test 'tests/*.yaml'`) each plan is
+checked before its own steps, and one mismatch makes the exit code 6.
+
+A plan can name its file itself, in its `game` section, so it is never run
+unpinned:
+
+```yaml
+game:
+  expect: pins.txt       # relative to the plan file
+  expectStrict: true
+```
+
+`--expect` and `--expect-strict` on the command line replace both keys (the
+file and the mode), the way `--launch` replaces `launch`: run the same plan
+against another file, or in the other mode, without editing it. A file given
+on the command line is relative to the working directory.
 
 ## Standing expectations
 
@@ -194,8 +239,7 @@ instead of a crash report that points somewhere else.
 A CI job or test script refuses to measure a drifted install:
 
 ```bash
-valheim-cli --expect-strict ci.pins || exit 1
-valheim-cli -t tests/my-feature.yaml
+valheim-cli --expect-strict ci.pins --test tests/my-feature.yaml
 ```
 
 A bug report says exactly what ran: ask for the output of

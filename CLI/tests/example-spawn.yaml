@@ -6,11 +6,13 @@ name: Creature Spawning Tests
 description: Tests basic creature spawning functionality
 
 # Game launch settings (optional)
-# These can be overridden with CLI flags: --launch, --stop-after
+# These can be overridden with CLI flags: --launch, --stop-after, --expect, --expect-strict
 # game:
 #   launch: false          # Set true to auto-launch Valheim
 #   launchTimeout: 120s    # Wait up to 2 min for game ready
 #   stopAfter: false       # Keep game running after tests
+#   expect: pins.txt       # Game must match this file before the first step (docs/expectations.md)
+#   expectStrict: false    # Every loaded plugin must be listed in it
 
 settings:
   timeout: 30s
