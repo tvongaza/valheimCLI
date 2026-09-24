@@ -107,8 +107,27 @@ namespace valheimCLI
         {
             try
             {
-                _listener = new TcpListener(IPAddress.Loopback, _port);
-                _listener.Start();
+                // A live reload starts this server a frame after the old instance
+                // closed its listener; the port can take a moment to come free.
+                for (int attempt = 1; ; attempt++)
+                {
+                    try
+                    {
+                        _listener = new TcpListener(IPAddress.Loopback, _port);
+                        _listener.Start();
+                        break;
+                    }
+                    catch (SocketException ex) when (LiveReload.ShouldRetryPortBind(attempt, _running))
+                    {
+                        _logger.LogWarning($"Port {_port} busy ({ex.SocketErrorCode}), retrying ({attempt}/{LiveReload.PortBindAttempts})");
+                        Thread.Sleep(LiveReload.PortBindRetryMs);
+                    }
+                }
+                if (!_running)
+                {
+                    _listener.Stop();
+                    return;
+                }
                 _logger.LogInfo($"Command server listening on 127.0.0.1:{_port}");
 
                 while (_running)
@@ -351,6 +370,8 @@ namespace valheimCLI
 
         public void Dispose()
         {
+            if (_stateTracker != null)
+                _stateTracker.OnStateChanged -= OnGameStateChanged;
             Stop();
         }
     }

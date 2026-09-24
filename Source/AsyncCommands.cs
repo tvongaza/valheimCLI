@@ -115,7 +115,7 @@ namespace valheimCLI
         private static bool TryF(string s, out float value) => float.TryParse(s, NumberStyles.Float, Inv, out value);
 
         /// <summary>Open the async request and run the coroutine; typed in the F5 console (no request) it runs anyway and prints there.</summary>
-        private static void Start(string name, Action<string> console, Func<Context, IEnumerator> body, bool gated)
+        internal static void Start(string name, Action<string> console, Func<Context, IEnumerator> body, bool gated)
         {
             AsyncHandle? handle = valheimCLIPlugin.BeginAsync();
             valheimCLIPlugin? plugin = valheimCLIPlugin.Instance;
