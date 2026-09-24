@@ -43,6 +43,8 @@ namespace valheimCLI
             _enabledConfig = Config.Bind("Server", "Enabled", true, "Enable the command server");
             _portConfig = Config.Bind("Server", "Port", 5555, "Port for the command server (localhost only)");
             _autoStartQueuedJoinConfig = Config.Bind("ClientLaunch", "AutoStartQueuedJoin", true, "Automatically start the selected character when Valheim has a queued startup/server join.");
+            ManifestCommands.FileConfig = Config.Bind("Expectations", "File", "", "A file of key=value lines naming the plugin builds (and optionally the world) this game must run; see docs/expectations.md. While it does not hold, every command sent through the CLI except the diagnostics (cli_manifest, cli_world, cli_expect) is refused. A relative path is relative to the BepInEx config folder. Empty = off.");
+            ManifestCommands.StrictConfig = Config.Bind("Expectations", "Strict", false, "Also require the expectations file to name every loaded plugin (a plugin not listed is a mismatch; list it as name=any if its build does not matter) and, once a world is loaded, to name the world (world= or worlduid=; world=any accepts any).");
             if (HasStartupJoinArgument())
             {
                 RequestAutoStartQueuedJoin();
@@ -67,6 +69,15 @@ namespace valheimCLI
             Log.LogInfo($"{ModName} loaded. CLI server on port {_portConfig.Value}");
         }
 
+        /// <summary>
+        /// Every plugin has loaded by the first frame: check the standing
+        /// expectations once so a mismatch is in the log before any command.
+        /// </summary>
+        private void Start()
+        {
+            ManifestCommands.StandingProblems();
+        }
+
         private void Update()
         {
             _stateTracker?.Update();
@@ -89,6 +100,10 @@ namespace valheimCLI
                     if (string.IsNullOrEmpty(command))
                     {
                         _commandServer.SendOutput("ERROR: code=empty_command message=Empty command.");
+                        continue;
+                    }
+                    if (ManifestCommands.Refuse(command, line => _commandServer.SendOutput(line)))
+                    {
                         continue;
                     }
                     Log.LogInfo($"Executing CLI command #{request.Id}: {command}");
