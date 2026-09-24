@@ -11,6 +11,7 @@ in its header; copy them into your own project and change what you need.
 | [wait-for-log.sh](wait-for-log.sh) | Return the moment a line matching a regex is written to the BepInEx log |
 | [log-summary.sh](log-summary.sh) | Count warnings and errors by source and by message; optionally fail on them |
 | [remote-tunnel.sh](remote-tunnel.sh) | Open, check or close an SSH tunnel to a game on another machine |
+| [smoke-plan.yaml](smoke-plan.yaml) | A test plan for any mod: reach a fresh local world, check the player and one of your mod's commands, take a screenshot |
 | [world-map.py](world-map.py) | Draw a `cli_world_dump` as an SVG map (biomes, water, contours, locations) with your own paths and points on top |
 
 ## Conventions

@@ -4,6 +4,8 @@
 #
 #   dev-loop.sh <MyMod.csproj> [test-plan.yaml]
 #
+# examples/smoke-plan.yaml is a plan to start from.
+#
 #   1. dotnet build -c Release (stops on a failed build)
 #   2. copies the built DLL (and its .pdb) into BepInEx/plugins
 #   3. launches Valheim and runs the plan with valheim-cli --test ... --launch
