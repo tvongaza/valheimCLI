@@ -90,6 +90,24 @@ valheim-cli cli_until 30 ready=true road_zone_state 331 -516 64   # poll any com
 valheim-cli cli_capture E-side 347.5 57.5 -522.5 331.1 51.5 -515.6  # pose, wait for zones / heightmap rebuilds / weather, render 2 frames, save, wait for the file
 ```
 
+## Know What You Are Testing
+
+`cli_manifest` lists every loaded plugin with the md5 of its DLL, `cli_world`
+names the loaded world (and on a server or host hashes its save files at
+load), and `cli_expect` checks both against `key=value` expectations. The CLI
+snapshots a working game into a file and checks later runs against it:
+
+```bash
+valheim-cli manifest --write pins.txt --with-world   # every plugin by GUID=md5, plus the world
+valheim-cli --expect-strict pins.txt                  # exit 6 with the differences if the game drifted
+valheim-cli --expect pins.txt spawn Boar 5            # run a command only on the expected game
+```
+
+Set `[Expectations] File` in the config and the game refuses every CLI command
+but the diagnostics while it does not match. See
+[docs/expectations.md](docs/expectations.md) for the file format, strict mode
+and the world-files hash recipe.
+
 ## Readiness And Exit Codes
 
 `--status` prints a compact agent-readable summary:
@@ -145,6 +163,7 @@ Exit codes:
 - `3`: connection failure
 - `4`: bad input
 - `5`: game not ready
+- `6`: the game does not match an `--expect` file
 
 ## Test Layout And Artifacts
 
@@ -172,6 +191,8 @@ Configure hosts, executable paths, and game paths with environment variables or 
 `BepInEx/config/valheimCLI.valheimCLI.cfg`:
 - `Server.Port` - default 5555
 - `Server.Enabled` - toggle on/off
+- `Expectations.File` - expectations file checked before every CLI command (empty = off); see [docs/expectations.md](docs/expectations.md)
+- `Expectations.Strict` - the file must also name every loaded plugin and the loaded world
 
 ## Requirements
 

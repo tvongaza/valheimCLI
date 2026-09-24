@@ -1,4 +1,5 @@
 using valheim_cli.Testing;
+using valheimCLI;
 
 namespace valheim_cli;
 
@@ -20,6 +21,8 @@ class Program
     private static TimeSpan _interval = TimeSpan.FromSeconds(2);
     private static string? _artifactsDir = null;
     private static Dictionary<string, string> _variables = new();
+    private static string? _expectFile = null;
+    private static bool _expectStrict = false;
 
     static int Main(string[] args)
     {
@@ -100,6 +103,12 @@ class Program
                 _artifactsDir = args[i + 1];
                 i++;
             }
+            else if ((args[i] == "--expect" || args[i] == "--expect-strict") && i + 1 < args.Length)
+            {
+                _expectFile = args[i + 1];
+                _expectStrict = args[i] == "--expect-strict";
+                i++;
+            }
             else if (args[i] == "--var" && i + 1 < args.Length)
             {
                 string varArg = args[i + 1];
@@ -154,7 +163,8 @@ class Program
                 args[i] == "--game-path" || args[i] == "--var" ||
                 args[i] == "--connect" || args[i] == "--password" ||
                 args[i] == "--password-file" || args[i] == "--timeout" ||
-                args[i] == "--interval" || args[i] == "--artifacts")
+                args[i] == "--interval" || args[i] == "--artifacts" ||
+                args[i] == "--expect" || args[i] == "--expect-strict")
             {
                 i++; // Skip the value too
                 continue;
@@ -195,9 +205,28 @@ class Program
                 return RunCommandHelp(commandArgs[1]);
             }
 
+            if (topLevelCommand == "manifest")
+            {
+                return RunManifestCommand(commandArgs);
+            }
+
             // Single command mode
             string command = string.Join(" ", commandArgs);
+            if (_expectFile != null)
+            {
+                int expectExit = RunExpectCheck(_expectFile, _expectStrict, quietOnPass: true);
+                if (expectExit != 0)
+                {
+                    return expectExit;
+                }
+            }
             return ExecuteSingleCommand(command);
+        }
+
+        // --expect with no command: only the check.
+        if (_expectFile != null && !_launch)
+        {
+            return RunExpectCheck(_expectFile, _expectStrict, quietOnPass: false);
         }
 
         if (_launch)
@@ -664,6 +693,8 @@ class Program
         Console.WriteLine("  --interval <duration> Poll interval for wait/join operations");
         Console.WriteLine("  --artifacts <dir>     Test-run artifact directory");
         Console.WriteLine("  --var <key=value>     Set a test variable (can be used multiple times)");
+        Console.WriteLine("  --expect <file>       Check the game against an expectations file first; exit 6 on a mismatch");
+        Console.WriteLine("  --expect-strict <file> The same, and every loaded plugin (and the world) must be listed");
         Console.WriteLine("  --help                Show this help");
         Console.WriteLine();
         Console.WriteLine("Examples:");
@@ -683,6 +714,10 @@ class Program
         Console.WriteLine("  valheim-cli wait --for terminal --timeout 120s");
         Console.WriteLine("  valheim-cli join --server 127.0.0.1:2456 --password-file ./password.txt --character Test");
         Console.WriteLine("  valheim-cli commands --group cli --json");
+        Console.WriteLine("  valheim-cli manifest --write pins.txt [--with-world]");
+        Console.WriteLine("                                           Snapshot the loaded plugins (and world) as expectations");
+        Console.WriteLine("  valheim-cli --expect pins.txt spawn Boar 5");
+        Console.WriteLine("                                           Run the command only if the game matches pins.txt");
         Console.WriteLine();
         Console.WriteLine("Interactive commands:");
         Console.WriteLine("  exit, quit         Exit the CLI");
@@ -750,6 +785,125 @@ class Program
             Console.Error.WriteLine($"Error: {ex.Message}");
             return 1;
         }
+    }
+
+    /// <summary>
+    /// Runs cli_expect with an expectations file's lines. Parsing is the mod's
+    /// own (Source/Expectations.cs), so a file the CLI accepts means the same
+    /// in the game. Exit 0 when every expectation holds, 6 when one does not.
+    /// </summary>
+    static int RunExpectCheck(string path, bool strict, bool quietOnPass)
+    {
+        if (!File.Exists(path))
+        {
+            return PrintBadInput($"Expectations file not found: {path}");
+        }
+
+        List<string> errors = new();
+        List<Expectation> expectations = Expectations.ParseLines(File.ReadAllLines(path), errors);
+        if (errors.Count > 0)
+        {
+            return PrintBadInput($"{path}: {string.Join("; ", errors)}");
+        }
+
+        if (expectations.Count == 0)
+        {
+            return PrintBadInput($"{path} has no expectations");
+        }
+
+        using ValheimClient client = new ValheimClient(_host, _port) { CommandTimeout = _timeout };
+        if (!client.Connect())
+        {
+            return PrintConnectionFailure();
+        }
+
+        CommandResult result = client.ExecuteCommand(Expectations.ExpectCommand(expectations, strict));
+        if (result.Ok && quietOnPass)
+        {
+            return 0;
+        }
+
+        if (_json)
+        {
+            JsonOutput.Write(new
+            {
+                ok = result.Ok,
+                command = "expect",
+                state = client.GetState(),
+                message = result.Ok ? $"{path} holds." : $"The game does not match {path}.",
+                errorCode = result.Ok ? "" : "expectation_mismatch",
+                output = result.Output
+            });
+        }
+        else
+        {
+            TextWriter writer = result.Ok ? Console.Out : Console.Error;
+            foreach (string line in result.Output)
+            {
+                writer.WriteLine(line);
+            }
+        }
+
+        return result.Ok ? 0 : (int)CliExitCode.ExpectationMismatch;
+    }
+
+    /// <summary>
+    /// Writes an expectations file that the running game satisfies (strict
+    /// mode included): every loaded plugin by GUID and md5, and with
+    /// --with-world the loaded world. Without --write it goes to stdout.
+    /// </summary>
+    static int RunManifestCommand(List<string> args)
+    {
+        string? writePath = GetOption(args, "--write");
+        bool withWorld = args.Any(arg => arg.Equals("--with-world", StringComparison.OrdinalIgnoreCase));
+        using ValheimClient client = new ValheimClient(_host, _port) { CommandTimeout = _timeout };
+        if (!client.Connect())
+        {
+            return PrintConnectionFailure();
+        }
+
+        CommandResult manifest = client.ExecuteCommand("cli_manifest");
+        List<PluginFacts> plugins = manifest.Output
+            .Select(Expectations.ParsePlugin)
+            .OfType<PluginFacts>()
+            .ToList();
+        if (!manifest.Ok || plugins.Count == 0)
+        {
+            foreach (string line in manifest.Output)
+            {
+                Console.Error.WriteLine(line);
+            }
+            Console.Error.WriteLine("ERROR: cli_manifest listed no plugins; is the game's valheimCLI older than this CLI?");
+            return (int)CliExitCode.CommandFailure;
+        }
+
+        WorldFacts? world = null;
+        if (withWorld)
+        {
+            CommandResult worldResult = client.ExecuteCommand("cli_world");
+            world = worldResult.Output.Select(Expectations.ParseWorld).OfType<WorldFacts>().FirstOrDefault();
+            if (world == null)
+            {
+                Console.Error.WriteLine("ERROR: no world is loaded; load one first or leave out --with-world");
+                return (int)CliExitCode.GameNotReady;
+            }
+        }
+
+        string text = Expectations.Snapshot(plugins, world, new[]
+        {
+            $"Expectations written by: valheim-cli manifest{(withWorld ? " --with-world" : "")}",
+            $"from the game at {_host}:{_port}, {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC."
+        });
+
+        if (writePath == null)
+        {
+            Console.Write(text);
+            return 0;
+        }
+
+        File.WriteAllText(writePath, text);
+        Console.WriteLine($"OK: wrote {plugins.Count} plugin(s){(world != null ? $" and world {world.Name}" : "")} to {writePath}");
+        return 0;
     }
 
     static async Task<int> RunWaitCommand(List<string> args)
