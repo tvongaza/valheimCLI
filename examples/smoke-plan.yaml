@@ -28,7 +28,7 @@ variables:
   mod_answer: help       # and text its output must contain
 
 tests:
-  # Started in a world? This step fails within seconds (code=unreachable)
+  # Started in a world? This step fails after about 15 s (code=unreachable)
   # instead of waiting out its timeout: log out first.
   - name: Main menu
     waitFor:
@@ -51,6 +51,7 @@ tests:
     waitFor:
       state: InWorld
       timeout: 300s
+      stall: 120s        # the load's heartbeat shows progress; nothing changing for 2 minutes ends the step
       message: Waiting for the world to load...
 
   - name: The player exists

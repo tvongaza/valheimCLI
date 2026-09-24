@@ -45,3 +45,52 @@ in its header; copy them into your own project and change what you need.
 - **Exit codes** follow `valheim-cli`: 0 success, 1 failure, 2 timeout
   or stall, 3 connection or missing file, 4 bad input, 5 game not in the
   needed state.
+
+## What a wait looks like
+
+Real output of `valheim-cli`, recorded against a stand-in for the game that
+replays a world load, so the times are short; `...` marks lines left out.
+Heartbeats go to stderr, the result line to stdout. A world loading, with a
+heartbeat every 5 s:
+
+```text
+$ valheim-cli wait --for in-world --timeout 300s --progress 5s
+...
+WAIT: 12s/300s for in-world; state=InWorldNoPlayer phase=generating_locations connection=Connected locationProgress=0.515; changed: locationProgress 0.210 -> 0.515, locationCount 1138 -> 2785
+...
+WAIT: 24s/300s for in-world; state=InWorldNoPlayer phase=loading_active_area connection=Connected; changed: phase generating_locations -> loading_active_area, locationsGenerated false -> true, locationProgress 0.819 -> 1.000, locationCount 4431 -> 5412
+OK: reached in-world; state=InWorld; connectionStatus=Connected
+$ echo $?
+0
+```
+
+A load that stops moving ends at the stall window, not the timeout (the
+default window is 120s), then prints the last status:
+
+```text
+$ valheim-cli wait --for in-world --timeout 300s --stall 30s --progress 10s
+...
+WAIT: 20s/300s for in-world; state=InWorldNoPlayer phase=generating_locations connection=Connected locationProgress=0.310; unchanged for 12s
+WAIT: 30s/300s for in-world; state=InWorldNoPlayer phase=generating_locations connection=Connected locationProgress=0.310; unchanged for 22s
+ERROR: code=stalled waiting for in-world; state=InWorldNoPlayer; phase=generating_locations; connectionStatus=Connected; nothing the game reports changed for 30s (stall window 30s)
+last status:
+...
+$ echo $?
+2
+```
+
+Waiting for the main menu while the game sits in a world ends after 15 s:
+
+```text
+$ valheim-cli wait --for main-menu --timeout 300s --progress 10s
+WAIT: 10s/300s for main-menu; state=InWorld phase=ready connection=Connected; unchanged for 10s
+ERROR: code=unreachable waiting for main-menu; state=InWorld; phase=ready; connectionStatus=Connected; the game is in a world and nothing is leaving it; the main menu comes only after a logout (cli_logout_save) or a disconnect
+last status:
+...
+$ echo $?
+5
+```
+
+A test plan's `waitFor` step prints the same heartbeat under the step, and
+a stalled or unreachable wait fails the step (`smoke-plan.yaml` started in a
+world stops at its first step with `code=unreachable`).
