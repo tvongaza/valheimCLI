@@ -21,6 +21,7 @@ class Program
     private static TimeSpan _progress = WaitPolicy.DefaultProgress;
     private static TimeSpan? _stall = null;
     private static bool _allowUnreachable = false;
+    private static int _retryUnstarted = 0;
     private static string? _argumentError = null;
     private static string? _artifactsDir = null;
     private static Dictionary<string, string> _variables = new();
@@ -132,6 +133,14 @@ class Program
             {
                 _allowUnreachable = true;
             }
+            else if (args[i] == "--retry-unstarted" && i + 1 < args.Length)
+            {
+                if (!int.TryParse(args[i + 1], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out _retryUnstarted))
+                {
+                    _argumentError = $"invalid --retry-unstarted count '{args[i + 1]}' (use a whole number, 0 to never resend)";
+                }
+                i++;
+            }
             else if (args[i] == "--var" && i + 1 < args.Length)
             {
                 string varArg = args[i + 1];
@@ -176,7 +185,7 @@ class Program
                 }
 
                 if (args[i] == "--timeout" || args[i] == "--interval" || args[i] == "--artifacts" ||
-                    args[i] == "--progress" || args[i] == "--stall")
+                    args[i] == "--progress" || args[i] == "--stall" || args[i] == "--retry-unstarted")
                 {
                     i++;
                     continue;
@@ -193,7 +202,8 @@ class Program
                 args[i] == "--connect" || args[i] == "--password" ||
                 args[i] == "--password-file" || args[i] == "--timeout" ||
                 args[i] == "--interval" || args[i] == "--artifacts" ||
-                args[i] == "--progress" || args[i] == "--stall")
+                args[i] == "--progress" || args[i] == "--stall" ||
+                args[i] == "--retry-unstarted")
             {
                 i++; // Skip the value too
                 continue;
@@ -478,7 +488,8 @@ class Program
             Interval = _interval,
             Progress = _progress,
             Stall = _stall,
-            AllowUnreachable = _allowUnreachable
+            AllowUnreachable = _allowUnreachable,
+            RetryUnstarted = _retryUnstarted
         };
 
         TestRunner runner = new TestRunner(launcher, options, _host, _port);
@@ -728,6 +739,7 @@ class Program
         Console.WriteLine("  --progress <duration> Print a wait heartbeat this often, to stderr (default 15s; 0 disables)");
         Console.WriteLine("  --stall <duration>    End a wait when nothing the game reports changes for this long (default 120s; 0 disables)");
         Console.WriteLine("  --allow-unreachable   Keep waiting in a state that needs an action (e.g. main menu while in a world)");
+        Console.WriteLine("  --retry-unstarted <n> Resend a command up to n times when the game expired it unrun behind a busy main thread (default 0)");
         Console.WriteLine("  --artifacts <dir>     Test-run artifact directory");
         Console.WriteLine("  --var <key=value>     Set a test variable (can be used multiple times)");
         Console.WriteLine("  --help                Show this help");
@@ -772,7 +784,12 @@ class Program
     {
         try
         {
-            using ValheimClient client = new ValheimClient(_host, _port) { CommandTimeout = _timeout };
+            using ValheimClient client = new ValheimClient(_host, _port)
+            {
+                CommandTimeout = _timeout,
+                RetryUnstarted = _retryUnstarted,
+                OnRetry = line => Console.Error.WriteLine(line)
+            };
             if (!client.Connect())
             {
                 Console.Error.WriteLine($"Cannot connect to Valheim at {_host}:{_port}");
@@ -1193,7 +1210,12 @@ class Program
                 if (client == null || !client.IsConnected)
                 {
                     client?.Dispose();
-                    client = new ValheimClient(_host, _port) { CommandTimeout = _timeout };
+                    client = new ValheimClient(_host, _port)
+                    {
+                        CommandTimeout = _timeout,
+                        RetryUnstarted = _retryUnstarted,
+                        OnRetry = line => Console.Error.WriteLine(line)
+                    };
                     if (!client.Connect())
                     {
                         Console.WriteLine("Failed to connect. Is Valheim running with the mod?");

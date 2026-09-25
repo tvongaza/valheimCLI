@@ -18,6 +18,7 @@
     <Compile Include="../../CLI/Testing/ConnectionDefaults.cs" Link="CLI/ConnectionDefaults.cs" />
     <Compile Include="../../CLI/Testing/CliModels.cs" Link="CLI/CliModels.cs" />
     <Compile Include="../../CLI/Testing/WaitProgress.cs" Link="CLI/WaitProgress.cs" />
+    <Compile Include="../../CLI/Testing/CommandRetry.cs" Link="CLI/CommandRetry.cs" />
   </ItemGroup>
 
   <ItemGroup>

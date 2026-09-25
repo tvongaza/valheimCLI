@@ -84,7 +84,11 @@ public class TestRunner
                 }
 
                 // Create and connect client
-                _client = new ValheimClient(_host, _port);
+                _client = new ValheimClient(_host, _port)
+                {
+                    RetryUnstarted = _options.RetryUnstarted,
+                    OnRetry = line => Console.Error.WriteLine($"    {line}")
+                };
                 if (!_client.Connect())
                 {
                     throw new InvalidOperationException("Failed to connect to Valheim. Is the game running with the mod?");
@@ -652,6 +656,9 @@ public class TestRunnerOptions
     public TimeSpan Progress { get; set; } = WaitPolicy.DefaultProgress;
     public TimeSpan? Stall { get; set; } = null;
     public bool AllowUnreachable { get; set; } = false;
+
+    // Resend a command that expired in the game's queue without running (--retry-unstarted)
+    public int RetryUnstarted { get; set; }
 
     // CLI variables (override YAML variables)
     public Dictionary<string, string> Variables { get; set; } = new();

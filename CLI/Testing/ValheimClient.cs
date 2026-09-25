@@ -209,7 +209,21 @@ public class ValheimClient : IDisposable
     /// <summary>Extra time the client allows for the server's own timeout response before giving up on the socket.</summary>
     public static readonly TimeSpan ResponseAllowance = TimeSpan.FromSeconds(5);
 
+    /// <summary>
+    /// Resend a command up to this many times when the game answers that it expired in the
+    /// queue and never ran (--retry-unstarted); 0 sends once. A command that started is never resent.
+    /// </summary>
+    public int RetryUnstarted { get; set; }
+
+    /// <summary>Gets one heartbeat line per resend.</summary>
+    public Action<string>? OnRetry { get; set; }
+
     public List<string> SendCommand(string command)
+    {
+        return CommandRetry.Send(() => SendOnce(command), RetryUnstarted, OnRetry);
+    }
+
+    private List<string> SendOnce(string command)
     {
         EnsureConnected();
 

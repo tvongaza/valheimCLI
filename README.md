@@ -80,6 +80,21 @@ resends a command that may have executed; it detects an older server
 (no capability line after the greeting) and falls back to `CMD:` with a
 warning.
 
+A command that expired in the queue never ran, so it is safe to send
+again: `--retry-unstarted <n>` (default 0) resends it up to `n` times, and
+only on that answer (`ERROR: code=command_timeout ... it had not started
+and will not run.`), never on a command that started and timed out or
+whose answer never arrived. Each resend prints a line to stderr:
+
+```text
+$ valheim-cli cli_save --retry-unstarted 3
+RETRY: 1/3 command #41 had not started (the game's main thread was busy) and never ran; sending it again
+RETRY: 2/3 command #42 had not started (the game's main thread was busy) and never ran; sending it again
+OK: SAVE ms=2310 world=TestWorld saveNumber=12 dir=/saves/worlds_local/TestWorld/
+```
+
+It applies to single commands, a test plan's commands and the interactive prompt.
+
 Async helpers replace fixed sleeps in capture scripts with one bounded call
 each; the answer names the condition still pending when a deadline passes:
 
