@@ -54,8 +54,16 @@ game=${VALHEIM_PATH:-$(default_game_path)}
 plugins="$game/BepInEx/plugins"
 [ -d "$plugins" ] || { echo "ERROR: no BepInEx/plugins under $game (set VALHEIM_PATH)" >&2; exit 3; }
 
-if "$cli" --port "$port" --status 2>/dev/null | grep -q 'local_process=true'; then
+# --status exits nonzero when the plugin is unavailable, even when its
+# independent local-process check found the game. Inspect that evidence
+# separately; an absent/unreadable status is not permission to deploy.
+status_text=$("$cli" --port "$port" --status 2>/dev/null) || true
+if grep -Eq '(^|[[:space:]])local_process=true([[:space:]]|$)' <<< "$status_text"; then
   echo "ERROR: Valheim is running; quit it first so the new build is the one that loads" >&2
+  exit 5
+fi
+if ! grep -Eq '(^|[[:space:]])local_process=false([[:space:]]|$)' <<< "$status_text"; then
+  echo "ERROR: cannot establish that Valheim is stopped; check --status before deploying" >&2
   exit 5
 fi
 
