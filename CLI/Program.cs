@@ -29,7 +29,9 @@ class Program
 
     static int Main(string[] args)
     {
-        if (args.Length > 0 && args[0] == "--help")
+        // --help anywhere: after -p PORT it used to fall through to the interactive prompt, which
+        // waits on stdin; run from a script whose stdin stays open, that is a wait with no end.
+        if (Array.IndexOf(args, "--help") >= 0)
         {
             PrintHelp();
             return 0;
