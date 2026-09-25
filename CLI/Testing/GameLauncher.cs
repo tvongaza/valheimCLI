@@ -216,9 +216,18 @@ public class GameLauncher
         TimeSpan interval,
         CancellationToken cancellationToken = default,
         TimeSpan? progress = null,
-        Action<WaitHeartbeat>? onHeartbeat = null)
+        Action<WaitHeartbeat>? onHeartbeat = null,
+        bool endAtPasswordPrompt = false)
     {
         WaitPolicy policy = WaitPolicy.TimeoutOnly(timeout, onHeartbeat != null ? progress ?? WaitPolicy.DefaultProgress : TimeSpan.Zero);
+        policy = new WaitPolicy
+        {
+            Timeout = policy.Timeout,
+            Progress = policy.Progress,
+            Stall = policy.Stall,
+            AllowUnreachable = policy.AllowUnreachable,
+            EndAtPasswordPrompt = endAtPasswordPrompt
+        };
         WaitResult result = await WaitAsync(target, policy, interval, onHeartbeat, cancellationToken);
         return result.Status;
     }
@@ -360,7 +369,9 @@ public class GameLauncher
             return result;
         }
 
-        GameStatus connectedStatus = await WaitForTargetAsync(WaitTarget.ServerConnected, timeout, interval, cancellationToken, progress, onHeartbeat);
+        // The join passes its password with the connect, so a prompt that stays open means the server asked for a
+        // password the join did not give: the join ends there instead of at its timeout.
+        GameStatus connectedStatus = await WaitForTargetAsync(WaitTarget.ServerConnected, timeout, interval, cancellationToken, progress, onHeartbeat, endAtPasswordPrompt: true);
         result.FinalStatus = connectedStatus;
         if (connectedStatus.Satisfies(WaitTarget.ServerConnected))
         {
@@ -385,6 +396,11 @@ public class GameLauncher
         if (connectionStatus.Contains("errorpassword"))
         {
             return "Server password was rejected.";
+        }
+
+        if (status.PasswordPrompt)
+        {
+            return "The server asks for a password and the join gave none; pass --password-file.";
         }
 
         if (connectionStatus.Contains("errorbanned"))
@@ -507,6 +523,7 @@ public class GameLauncher
                     RespawnWait = GetFloatDetail(statusDetails, "respawnWait"),
                     Dedicated = GetBoolDetail(statusDetails, "dedicated"),
                     Listening = GetBoolDetail(statusDetails, "listening"),
+                    PasswordPrompt = GetBoolDetail(statusDetails, "passwordPrompt"),
                     ConnectionStatus = connectionStatus,
                     ConnectedServer = server,
                     PluginLog = pluginLog
@@ -666,6 +683,9 @@ public class GameStatus
     public bool Listening { get; set; }
     public string ConnectionStatus { get; set; } = "";
     public string ConnectedServer { get; set; } = "";
+
+    /// <summary>The game waits at the server's password prompt (the join gave no password); false from an older plugin.</summary>
+    public bool PasswordPrompt { get; set; }
     public bool WaitTimedOut { get; set; }
     public string WaitTargetName { get; set; } = "";
     public PluginLogInfo PluginLog { get; set; } = new();

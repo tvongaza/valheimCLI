@@ -410,6 +410,54 @@ public class WaitProgressTests
     }
 
     [Fact]
+    public void AJoinWaitingAtThePasswordPromptIsUnreachableAfterTheGrace()
+    {
+        Run run = Observe(WaitTarget.ServerConnected, Policy(240), t =>
+        {
+            GameStatus status = Status("Loading", "connecting_screen", "Connecting");
+            status.PasswordPrompt = t >= 4;
+            return status;
+        }, until: 240);
+
+        Assert.Equal(WaitOutcome.Unreachable, run.Outcome);
+        Assert.InRange(run.At, 4 + WaitPolicy.UnreachableGrace.TotalSeconds, 4 + WaitPolicy.UnreachableGrace.TotalSeconds + 2);
+        Assert.Contains("password", run.Reason);
+    }
+
+    [Fact]
+    public void AJoinsOwnWaitEndsAtThePasswordPromptThoughItWaitsThroughEverythingElse()
+    {
+        WaitPolicy join = WaitPolicy.TimeoutOnly(TimeSpan.FromSeconds(240), TimeSpan.FromSeconds(15));
+        join = new WaitPolicy { Timeout = join.Timeout, Progress = join.Progress, Stall = join.Stall, AllowUnreachable = join.AllowUnreachable, EndAtPasswordPrompt = true };
+        Run run = Observe(WaitTarget.ServerConnected, join, t =>
+        {
+            GameStatus status = Status("Loading", "connecting_screen", "Connecting");
+            status.PasswordPrompt = t >= 4;
+            return status;
+        }, until: 240);
+
+        Assert.Equal(WaitOutcome.Unreachable, run.Outcome);
+        Assert.InRange(run.At, 4 + WaitPolicy.UnreachableGrace.TotalSeconds, 4 + WaitPolicy.UnreachableGrace.TotalSeconds + 2);
+        Assert.Contains("password", run.Reason);
+    }
+
+    [Fact]
+    public void SomeoneTypingThePasswordIsWaitedForWithAllowUnreachable()
+    {
+        Run run = Observe(WaitTarget.ServerConnected, Policy(240, allowUnreachable: true), t =>
+        {
+            if (t >= 40)
+                return InWorld();
+            GameStatus status = Status("Loading", "connecting_screen", "Connecting");
+            status.PasswordPrompt = true;
+            return status;
+        }, until: 240);
+
+        Assert.Equal(WaitOutcome.Reached, run.Outcome);
+        Assert.Equal(40, run.At);
+    }
+
+    [Fact]
     public void ThePreviousAttemptsRejectionIsNotThisOnes()
     {
         // A wrong-password join, then a join with the right one: the game still says ErrorPassword until the new

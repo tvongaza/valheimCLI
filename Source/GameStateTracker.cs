@@ -138,6 +138,22 @@ namespace valheimCLI
             bool dedicated = IsDedicatedServer();
             bool listening = IsListening(znet);
 
+            // A client the server asked for a password it was not given waits at the password prompt with
+            // nothing changing; a join's wait says so instead of running to its timeout.
+            bool passwordPrompt = false;
+            if (znet != null)
+            {
+                try
+                {
+                    passwordPrompt = znet.InPasswordDialog();
+                }
+                catch
+                {
+                    // A dedicated server has no dialog object.
+                    passwordPrompt = false;
+                }
+            }
+
             float respawnWait = 0f;
             if (Game.instance != null && GameRespawnWaitField != null)
             {
@@ -165,7 +181,8 @@ namespace valheimCLI
                    " activeAreaLoaded=" + Bool(activeAreaLoaded) +
                    " respawnWait=" + respawnWait.ToString("F1", CultureInfo.InvariantCulture) +
                    " dedicated=" + Bool(dedicated) +
-                   " listening=" + Bool(listening);
+                   " listening=" + Bool(listening) +
+                   " passwordPrompt=" + Bool(passwordPrompt);
         }
 
         private static string DetectLoadPhase(GameState state)

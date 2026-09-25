@@ -62,6 +62,13 @@ public sealed class WaitPolicy
     /// <summary>Keep waiting in a state that needs an action (someone else will take it).</summary>
     public bool AllowUnreachable { get; init; }
 
+    /// <summary>
+    /// A join's wait: end (unreachable) when the game has sat at the server's password prompt for the unreachable
+    /// grace, even though the join's policy otherwise waits through every state. The join passed its password
+    /// with the connect, so a prompt that stays open means none was given.
+    /// </summary>
+    public bool EndAtPasswordPrompt { get; init; }
+
     /// <summary>Only the timeout ends the wait: the behaviour of the waits inside launch and join.</summary>
     public static WaitPolicy TimeoutOnly(TimeSpan timeout, TimeSpan progress)
     {
@@ -194,6 +201,7 @@ public sealed class WaitSnapshot
     public string ConnectionStatus { get; init; } = "";
     public string Server { get; init; } = "";
     public bool Listening { get; init; }
+    public bool PasswordPrompt { get; init; }
 
     public static WaitSnapshot From(GameStatus status)
     {
@@ -214,7 +222,8 @@ public sealed class WaitSnapshot
             ActiveAreaLoaded = status.ActiveAreaLoaded,
             ConnectionStatus = status.ConnectionStatus,
             Server = status.ConnectedServer,
-            Listening = status.Listening
+            Listening = status.Listening,
+            PasswordPrompt = status.PasswordPrompt
         };
     }
 
@@ -242,6 +251,7 @@ public sealed class WaitSnapshot
         Add(changes, "connection", previous.ConnectionStatus, ConnectionStatus);
         Add(changes, "server", previous.Server, Server);
         Add(changes, "listening", Bool(previous.Listening), Bool(Listening));
+        Add(changes, "passwordPrompt", Bool(previous.PasswordPrompt), Bool(PasswordPrompt));
         return changes;
     }
 
@@ -383,6 +393,13 @@ public static class WaitReachability
         if (target == WaitTarget.MainMenu && stage == WaitStage.InWorld && !IsLeavingWorld(status))
         {
             return "the game is in a world and nothing is leaving it; the main menu comes only after a logout (cli_logout_save) or a disconnect";
+        }
+
+        // The server asked for a password the join did not give: the game waits at its prompt and nothing changes
+        // (25 Sep 2026: a join waited out its timeout there, and the next join waited behind the open prompt).
+        if (target == WaitTarget.ServerConnected && status.PasswordPrompt)
+        {
+            return "the server asks for a password and the join gave none (the game waits at its password prompt); join with --password-file, or pass --allow-unreachable while someone types it";
         }
 
         return "";
@@ -535,6 +552,12 @@ public sealed class WaitTracker
         if (lost && !_policy.AllowUnreachable && _target != WaitTarget.Process)
         {
             return new WaitStep { Outcome = WaitOutcome.Lost, Reason = _loss.Reason, ErrorCode = _loss.Code };
+        }
+
+        if (_policy.EndAtPasswordPrompt && _target == WaitTarget.ServerConnected && status.PasswordPrompt &&
+            Unchanged >= WaitPolicy.UnreachableGrace)
+        {
+            return Ended(WaitOutcome.Unreachable, WaitReachability.Why(_target, status));
         }
 
         if (!_policy.AllowUnreachable && Unchanged >= WaitPolicy.UnreachableGrace)
