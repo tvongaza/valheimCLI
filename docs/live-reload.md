@@ -92,6 +92,10 @@ so undoing by name or id does not touch the new instance.
 - **Log sources.** Remove sources made with `Logger.CreateLogSource` with
   `BepInEx.Logging.Logger.Sources.Remove(source)`. The plugin's own `Logger`
   is one too. A left-over source only costs memory.
+- **Temporary overrides.** Put back what the plugin changed on existing game
+  objects and meant to undo later (a flag switched off for a while): the
+  record of the old values lives in the old assembly's statics, and the new
+  instance starts without it.
 - **GameObjects and components.** Destroy what the plugin created, above all
   objects marked `DontDestroyOnLoad`, and components it added to game objects
   or prefabs: they run the old assembly's code for as long as they live.
