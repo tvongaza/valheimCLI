@@ -488,14 +488,15 @@ namespace valheimCLI
                 return false;
             }
 
-            List<Type> exact = named.Where(t => DottedName(t) == typeName).ToList();
-            List<Type> withMember = exact.Where(t => HasStaticMember(t, memberName)).ToList();
-            if (withMember.Count == 0)
+            // Resolve assembly replacement before inspecting members. A removed
+            // member must not bring an obsolete plugin implementation back to life.
+            List<Copies> current = ChooseCopies(index, named, liveAssemblies);
+            List<Copies> exact = current.Where(c => DottedName(c.Chosen) == typeName).ToList();
+            List<Copies> distinct = exact.Where(c => HasStaticMember(c.Chosen, memberName)).ToList();
+            if (distinct.Count == 0)
             {
-                withMember = named.Where(t => HasStaticMember(t, memberName)).ToList();
+                distinct = current.Where(c => HasStaticMember(c.Chosen, memberName)).ToList();
             }
-
-            List<Copies> distinct = ChooseCopies(index, withMember, liveAssemblies);
             if (distinct.Count > 1)
             {
                 List<string> details = distinct.Take(MaxListed)
@@ -509,8 +510,8 @@ namespace valheimCLI
             }
             if (distinct.Count == 0)
             {
-                List<Type> types = exact.Count > 0 ? exact : named;
-                failure = NoMember(ChooseCopies(index, types, liveAssemblies).Select(c => c.Chosen).ToList(), typeName, memberName);
+                List<Type> types = (exact.Count > 0 ? exact : current).Select(c => c.Chosen).ToList();
+                failure = NoMember(types, typeName, memberName);
                 return false;
             }
 

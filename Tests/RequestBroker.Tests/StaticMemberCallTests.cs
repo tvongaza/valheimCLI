@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Reflection.Emit;
 using CallFixtures;
 using valheimCLI;
 using Xunit;
@@ -423,6 +424,40 @@ public class StaticMemberCallTests
         StaticMemberCall.Run(new StaticMemberCall.TypeIndex(new Assembly[] { onlyBroken }), "Probe.Shared", output.Add);
         Assert.Equal("no_member", ErrorCode(output));
         Assert.Contains("  CallFixtures.Beta.Probe has no static fields, properties or methods", output);
+    }
+
+    /// <summary>
+    /// An assembly holding one static class, Reloaded.Diagnostics, built at run time so that
+    /// two copies can differ in their members (a CopiedType copies its shape's members).
+    /// </summary>
+    private static Assembly EmittedCopy(string name, bool withRemovedMethod)
+    {
+        AssemblyBuilder assembly = AssemblyBuilder.DefineDynamicAssembly(new AssemblyName(name), AssemblyBuilderAccess.Run);
+        TypeBuilder type = assembly.DefineDynamicModule(name)
+            .DefineType("Reloaded.Diagnostics", TypeAttributes.Public | TypeAttributes.Abstract | TypeAttributes.Sealed);
+        if (withRemovedMethod)
+        {
+            ILGenerator il = type.DefineMethod("RemovedAction", MethodAttributes.Public | MethodAttributes.Static, typeof(string), Type.EmptyTypes)
+                .GetILGenerator();
+            il.Emit(OpCodes.Ldstr, "old code executed");
+            il.Emit(OpCodes.Ret);
+        }
+        // As AppDomain.GetAssemblies reports it: the runtime assembly, not the builder.
+        return type.CreateType()!.Assembly;
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AMemberTheCurrentCopyRemovedIsNotCalledOnAnOlderCopy(bool currentCopyIsLive)
+    {
+        Assembly old = EmittedCopy("Reloaded-1", true);
+        Assembly current = EmittedCopy("Reloaded-2", false);
+        List<string> output = new List<string>();
+        StaticMemberCall.Run(new StaticMemberCall.TypeIndex(new[] { old, current }), "Reloaded.Diagnostics.RemovedAction", output.Add, null,
+            currentCopyIsLive ? () => new[] { current } : null);
+        Assert.DoesNotContain("VALUE \"old code executed\"", output);
+        Assert.Equal("no_member", ErrorCode(output));
     }
 
     // ------------------------------------------------------------ overloads
