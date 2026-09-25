@@ -138,12 +138,13 @@ The JSON launch response includes `phases`, `failurePhase`, `errorCode`, and the
 - `local-player`
 - `server-connected`
 
-A wait watches the whole status (process, plugin, state, load phase, location progress, connection) and ends in one of four ways:
+A wait watches the whole status (process, plugin, state, load phase, location progress, connection) and ends in one of five ways:
 
 - **reached**: `OK: reached <target>; ...`, exit 0.
 - **timeout**: `--timeout` passed, `TIMEOUT: waiting for <target>; ...`, exit 2.
 - **stalled**: nothing in the status changed for `--stall` (default 120s; `0` disables), `ERROR: code=stalled ...`, exit 2. A stall is a timeout that came early, so it keeps the timeout's exit code.
 - **unreachable**: the game is in a state from which the target never comes without an action, `ERROR: code=unreachable ...`, exit 5. Waiting for `main-menu` while the game is in a world is the common case: the menu comes only after a logout (`cli_logout_save`) or a disconnect.
+- **lost**: the game was there during the wait and is gone, exit 7, within about 6 s at the default `--interval` and never after the stall window. `ERROR: code=game_exited ...` when its process was seen on this machine and has exited; `ERROR: code=plugin_lost ...` when its plugin answered earlier in the wait and has stopped answering (a game through a tunnel or a dedicated server, whose process is not visible here, or a game whose process is still quitting).
 
 While it waits, it prints a heartbeat every `--progress` (default 15s; `0` disables) to stderr, so stdout keeps only the result:
 
@@ -152,13 +153,14 @@ WAIT: 45s/300s for in-world; state=InWorldNoPlayer phase=generating_locations co
 WAIT: 60s/300s for in-world; state=InWorldNoPlayer phase=loading_active_area connection=Connected; changed: phase generating_locations -> loading_active_area
 ```
 
-A stalled or unreachable wait prints the last status to stderr after its result line. With `--json` each heartbeat is a one-line JSON event on stderr (`{"event":"wait-progress",...}`) and the final document on stdout carries `errorCode`, `elapsedSeconds`, `unchangedSeconds`, the `heartbeats` and the last `status`.
+A stalled, unreachable or lost wait prints the last status to stderr after its result line. With `--json` each heartbeat is a one-line JSON event on stderr (`{"event":"wait-progress",...}`) and the final document on stdout carries `errorCode`, `elapsedSeconds`, `unchangedSeconds`, the `heartbeats` and the last `status`.
 
 How the decisions are made:
 
 - **Progress** is any change in state, load phase, location progress or count, locations generated, active area loaded, connection status or server, whether the game runs, whether the plugin answers, and (only while the game is starting and reports nothing else) the size of the BepInEx log. Timers such as `respawnWait` and `estimatedLocationSeconds` move on their own and do not count.
 - **The stall window** starts at the last change and is armed only once the game has been seen running, so a wait started ahead of a launch waits for the launch. 120s is conservative: location generation reports its progress and the load phases follow one another, but a heavily modded game between the plugin loading and the main menu, loading the area around the player on a slow disk, or a world save that holds the main thread can each sit on one value for about a minute. A stall window no shorter than `--timeout` never fires. Raise it, or pass `--stall 0`, for a wait during which a person acts in a menu (nothing in the status changes while a character is picked).
-- **Unreachable** is decided only from settled states, and only after the status has held for 15 s, which covers a logout or disconnect requested just before or just after the wait starts. Waiting for `main-menu` is unreachable when the game is in a world with its player and nothing is leaving it: the plugin does not report the world shutting down and the connection status shows no error or disconnect. A game that was running during the wait and stops is unreachable for every target but `process`. A server that rejects the connection (wrong version or password) ends a `server-connected` wait at once. Loading states (`Loading`, `InWorldNoPlayer`) are never unreachable, as entering and leaving a world pass through the same ones, and waiting for a world from the main menu is never unreachable, as a join may be queued; the stall window covers both. `--allow-unreachable` keeps waiting in any state, for a wait where someone else logs out; add `--stall 0` if that person may take longer than the stall window.
+- **Lost** needs something that was there: a game not up yet (`wait --for plugin-server` right after a launch) is waited for, however long it takes to answer. The loss must hold for 3 polls in a row spanning at least 4 s, so one failed poll between two answers (a tunnel hiccup) is not a loss. A wait for `process` is never lost; it is how a script waits for a relaunch. `--allow-unreachable` keeps waiting through a loss too, for a wait across a restart someone else makes.
+- **Unreachable** is decided only from settled states, and only after the status has held for 15 s, which covers a logout or disconnect requested just before or just after the wait starts. Waiting for `main-menu` is unreachable when the game is in a world with its player and nothing is leaving it: the plugin does not report the world shutting down and the connection status shows no error or disconnect. A server that rejects the connection (wrong version or password) ends a `server-connected` wait at once. Loading states (`Loading`, `InWorldNoPlayer`) are never unreachable, as entering and leaving a world pass through the same ones, and waiting for a world from the main menu is never unreachable, as a join may be queued; the stall window covers both. `--allow-unreachable` keeps waiting in any state, for a wait where someone else logs out; add `--stall 0` if that person may take longer than the stall window.
 
 The waits inside `--launch` and `join` print the same heartbeat but end only on their timeout (or a rejected connection), as before.
 
@@ -181,6 +183,7 @@ Exit codes:
 - `3`: connection failure
 - `4`: bad input
 - `5`: game not ready, or a wait whose target cannot be reached from the game's state
+- `7`: the game exited, or its plugin stopped answering, during a wait (`game_exited`, `plugin_lost`)
 
 ## Test Layout And Artifacts
 

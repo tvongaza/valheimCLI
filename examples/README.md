@@ -41,10 +41,11 @@ in its header; copy them into your own project and change what you need.
   every outcome, failures included, so a failure returns as quickly as a
   success; only a timeout means nothing happened. Waits print a `WAIT:`
   heartbeat to stderr (`PROGRESS` sets the interval), and `valheim-cli
-  wait` also ends early on a stall or a state that cannot reach its target.
+  wait` also ends early on a stall, a state that cannot reach its target,
+  or a game that exits or stops answering.
 - **Exit codes** follow `valheim-cli`: 0 success, 1 failure, 2 timeout
   or stall, 3 connection or missing file, 4 bad input, 5 game not in the
-  needed state.
+  needed state, 7 the game went away during a wait.
 
 ## What a wait looks like
 

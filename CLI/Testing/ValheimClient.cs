@@ -48,8 +48,12 @@ public class ValheimClient : IDisposable
             _reader = new StreamReader(_stream, ConnectionDefaults.Utf8NoBom);
             _writer = new StreamWriter(_stream, ConnectionDefaults.Utf8NoBom) { AutoFlush = true };
 
-            // Wait for ready message
+            // Wait for ready message. The plugin's socket thread greets at once whatever
+            // the game is doing; a tunnel whose far end is gone may accept and then say
+            // nothing, so the greeting has a deadline instead of blocking a wait forever.
+            _stream.ReadTimeout = (int)GreetingTimeout.TotalMilliseconds;
             string? ready = _reader.ReadLine();
+            _stream.ReadTimeout = Timeout.Infinite;
             if (ready != "VALHEIM_CLI_READY")
             {
                 Disconnect();
@@ -82,7 +86,16 @@ public class ValheimClient : IDisposable
         {
             return false;
         }
+        catch (IOException)
+        {
+            // No greeting in time, or the connection closed during it.
+            Disconnect();
+            return false;
+        }
     }
+
+    /// <summary>How long Connect waits for the plugin's greeting.</summary>
+    public static readonly TimeSpan GreetingTimeout = TimeSpan.FromSeconds(5);
 
     public void Disconnect()
     {

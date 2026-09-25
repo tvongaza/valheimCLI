@@ -9,7 +9,10 @@ public enum WaitOutcome
     Reached,
     TimedOut,
     Stalled,
-    Unreachable
+    Unreachable,
+
+    /// <summary>The game was there during the wait and is gone: it exited, or its plugin stopped answering.</summary>
+    Lost
 }
 
 /// <summary>
@@ -37,6 +40,16 @@ public sealed class WaitPolicy
     /// status within a few frames; the margin is for the request that starts it.
     /// </summary>
     public static readonly TimeSpan UnreachableGrace = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// A game that was there is gone when this many polls in a row, spanning at least
+    /// LostAfter, find neither its process nor its plugin. One failed poll between two
+    /// answers (a tunnel hiccup) is not a loss; three over 4 s are (6 s at the default
+    /// 2 s interval, counted from the last answer).
+    /// </summary>
+    public const int LostAfterPolls = 3;
+
+    public static readonly TimeSpan LostAfter = TimeSpan.FromSeconds(4);
 
     public TimeSpan Timeout { get; init; } = TimeSpan.FromSeconds(120);
 
@@ -291,6 +304,9 @@ public sealed class WaitStep
 {
     public WaitOutcome Outcome { get; init; }
     public string Reason { get; init; } = "";
+
+    /// <summary>The errorCode of an ending other than reached: timeout, stalled, unreachable, game_exited or plugin_lost.</summary>
+    public string ErrorCode { get; init; } = "";
     public WaitHeartbeat? Heartbeat { get; init; }
 }
 
@@ -348,14 +364,11 @@ public static class WaitReachability
     /// is loading may be entering a world or leaving one, and a game that is at the main
     /// menu may have a join queued, so neither is ever called unreachable here.
     /// </summary>
-    public static string Why(WaitTarget target, GameStatus status, bool seenRunning)
+    public static string Why(WaitTarget target, GameStatus status)
     {
+        // A game that stops during the wait is not decided here: WaitLoss ends the
+        // wait within seconds, with its own code, instead of after this grace.
         WaitStage stage = StageOf(status);
-        if (target != WaitTarget.Process && seenRunning && stage == WaitStage.NotRunning)
-        {
-            return "the game stopped running during the wait; start it again";
-        }
-
         if (target == WaitTarget.MainMenu && stage == WaitStage.InWorld && !IsLeavingWorld(status))
         {
             return "the game is in a world and nothing is leaving it; the main menu comes only after a logout (cli_logout_save) or a disconnect";
@@ -377,8 +390,70 @@ public static class WaitReachability
 }
 
 /// <summary>
+/// Notices a game that was there during the wait and is gone. Only a loss counts: a
+/// game that has not come up yet (a wait started ahead of a launch) never is one.
+/// The local process was seen and has exited (game_exited), or the plugin answered and
+/// has stopped answering (plugin_lost: a game through a tunnel or a dedicated server,
+/// whose process is not visible here, or a local game still quitting). Each poll
+/// that finds the game gone counts; one that finds its plugin answering resets the
+/// count, so a single failed poll between answers is a blip, not a loss.
+/// </summary>
+public sealed class WaitLoss
+{
+    private bool _seenProcess;
+    private bool _seenAnswer;
+    private int _misses;
+    private DateTime _firstMiss;
+
+    /// <summary>game_exited or plugin_lost once the loss is decided, otherwise "".</summary>
+    public string Code { get; private set; } = "";
+
+    public string Reason { get; private set; } = "";
+
+    public bool Observe(GameStatus status, DateTime at)
+    {
+        bool processGone = _seenProcess && !status.ProcessSeenLocally;
+        bool answerGone = _seenAnswer && !status.IsConnected;
+        _seenProcess |= status.ProcessSeenLocally;
+        _seenAnswer |= status.IsConnected;
+        if (status.IsConnected || (!processGone && !answerGone))
+        {
+            _misses = 0;
+            return false;
+        }
+
+        if (_misses == 0)
+        {
+            _firstMiss = at;
+        }
+
+        _misses++;
+        TimeSpan gone = at - _firstMiss;
+        if (_misses < WaitPolicy.LostAfterPolls || gone < WaitPolicy.LostAfter)
+        {
+            return false;
+        }
+
+        string polls = $"{_misses} polls over {WaitDurations.Format(gone)}";
+        if (processGone)
+        {
+            Code = "game_exited";
+            Reason = $"the game process exited during the wait (not found for {polls}); start it again";
+        }
+        else
+        {
+            Code = "plugin_lost";
+            Reason = $"the plugin answered earlier in this wait and has not answered for {polls}" +
+                     (status.ProcessSeenLocally ? "; the game process is still here (it may be quitting or hung)" : "; the game (or the tunnel to it) is gone");
+        }
+
+        return true;
+    }
+}
+
+/// <summary>
 /// Decides, one status observation at a time, whether a wait has reached its target,
-/// timed out, stalled or become unreachable, and when to print a heartbeat. It keeps
+/// timed out, stalled, become unreachable or lost the game, and when to print a heartbeat. It keeps
 /// no clock of its own: every call passes the time the status was read, which keeps
 /// it testable and lets a caller stamp an observation with the moment the status was
 /// asked for (a busy game can take seconds to answer; that time is not a stall).
@@ -393,6 +468,7 @@ public sealed class WaitTracker
     private DateTime _changedAt;
     private DateTime _lastBeat;
     private bool _seenRunning;
+    private readonly WaitLoss _loss = new();
 
     public WaitTracker(WaitTarget target, WaitPolicy policy, DateTime start)
     {
@@ -432,32 +508,36 @@ public sealed class WaitTracker
         string rejected = WaitReachability.Rejected(_target, status);
         if (rejected.Length > 0)
         {
-            return new WaitStep { Outcome = WaitOutcome.Unreachable, Reason = rejected };
+            return Ended(WaitOutcome.Unreachable, rejected);
+        }
+
+        // A game that exits comes back only when someone starts it, so --allow-unreachable
+        // (someone else acts) keeps waiting through it, as the launch and join waits do.
+        bool lost = _loss.Observe(status, at);
+        if (lost && !_policy.AllowUnreachable && _target != WaitTarget.Process)
+        {
+            return new WaitStep { Outcome = WaitOutcome.Lost, Reason = _loss.Reason, ErrorCode = _loss.Code };
         }
 
         if (!_policy.AllowUnreachable && Unchanged >= WaitPolicy.UnreachableGrace)
         {
-            string why = WaitReachability.Why(_target, status, _seenRunning);
+            string why = WaitReachability.Why(_target, status);
             if (why.Length > 0)
             {
-                return new WaitStep { Outcome = WaitOutcome.Unreachable, Reason = why };
+                return Ended(WaitOutcome.Unreachable, why);
             }
         }
 
         if (Elapsed >= _policy.Timeout)
         {
-            return new WaitStep { Outcome = WaitOutcome.TimedOut, Reason = $"not reached within {WaitDurations.Format(_policy.Timeout)}" };
+            return Ended(WaitOutcome.TimedOut, $"not reached within {WaitDurations.Format(_policy.Timeout)}");
         }
 
         // A game that has not been seen running has not started, which is not a stall:
         // the wait may have been started ahead of the launch.
         if (_policy.Stall > TimeSpan.Zero && _seenRunning && Unchanged >= _policy.Stall)
         {
-            return new WaitStep
-            {
-                Outcome = WaitOutcome.Stalled,
-                Reason = $"nothing the game reports changed for {WaitDurations.Format(Unchanged)} (stall window {WaitDurations.Format(_policy.Stall)})"
-            };
+            return Ended(WaitOutcome.Stalled, $"nothing the game reports changed for {WaitDurations.Format(Unchanged)} (stall window {WaitDurations.Format(_policy.Stall)})");
         }
 
         WaitHeartbeat? beat = null;
@@ -484,13 +564,21 @@ public sealed class WaitTracker
         return new WaitStep { Outcome = WaitOutcome.Waiting, Heartbeat = beat };
     }
 
+    private static WaitStep Ended(WaitOutcome outcome, string reason)
+    {
+        return new WaitStep { Outcome = outcome, Reason = reason, ErrorCode = ErrorCode(outcome) };
+    }
+
     private static bool ShowsLocationProgress(GameStatus status)
     {
         return status.LoadPhase.Equals("generating_locations", StringComparison.OrdinalIgnoreCase) ||
                (status.LocationProgress > 0f && status.LocationProgress < 1f);
     }
 
-    /// <summary>The errorCode for an outcome that ended the wait without reaching the target.</summary>
+    /// <summary>
+    /// The errorCode for an outcome that ended the wait without reaching the target. A lost
+    /// game has two (game_exited, plugin_lost); the step that decided it carries the one.
+    /// </summary>
     public static string ErrorCode(WaitOutcome outcome)
     {
         return outcome switch
@@ -498,6 +586,7 @@ public sealed class WaitTracker
             WaitOutcome.TimedOut => "timeout",
             WaitOutcome.Stalled => "stalled",
             WaitOutcome.Unreachable => "unreachable",
+            WaitOutcome.Lost => "plugin_lost",
             _ => ""
         };
     }
@@ -506,6 +595,8 @@ public sealed class WaitTracker
     /// Exit code per outcome. A stall is a timeout that came early, so it keeps the
     /// timeout's code and a script that retries on 2 still does. An unreachable target
     /// is the game being in the wrong state for it, which is what 5 (game not ready) means.
+    /// A game that went away during the wait has its own code: no state of it is left to
+    /// be ready or not, and a script restarts the game rather than retrying the wait.
     /// </summary>
     public static CliExitCode ExitCode(WaitOutcome outcome)
     {
@@ -513,6 +604,7 @@ public sealed class WaitTracker
         {
             WaitOutcome.Reached => CliExitCode.Success,
             WaitOutcome.Unreachable => CliExitCode.GameNotReady,
+            WaitOutcome.Lost => CliExitCode.GameLost,
             _ => CliExitCode.Timeout
         };
     }

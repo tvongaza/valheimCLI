@@ -375,7 +375,7 @@ public class TestRunner
             }
 
             GameStatus status = waited.Status;
-            return $"Wait for {condition.State} failed: code={WaitTracker.ErrorCode(waited.Outcome)}; " +
+            return $"Wait for {condition.State} failed: code={waited.ErrorCode}; " +
                    $"state={status.State} phase={status.LoadPhase} connection={status.ConnectionStatus}; " +
                    (waited.Reason.Length > 0 ? waited.Reason : "not reached");
         }

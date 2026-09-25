@@ -10,7 +10,13 @@ public enum CliExitCode
     Timeout = 2,
     ConnectionFailure = 3,
     BadInput = 4,
-    GameNotReady = 5
+    GameNotReady = 5,
+
+    /// <summary>
+    /// The game exited, or its plugin stopped answering, during a wait. 7, not 6: an
+    /// expectation mismatch (a game that is not the one a test expects) is being given 6.
+    /// </summary>
+    GameLost = 7
 }
 
 public sealed class CliResponse

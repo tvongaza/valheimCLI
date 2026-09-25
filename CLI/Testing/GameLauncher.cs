@@ -249,9 +249,11 @@ public class GameLauncher
             status.WaitTargetName = WaitTargets.ToName(target);
         }
 
+        WaitOutcome outcome = step.Outcome == WaitOutcome.Waiting ? WaitOutcome.TimedOut : step.Outcome;
         return new WaitResult
         {
-            Outcome = step.Outcome == WaitOutcome.Waiting ? WaitOutcome.TimedOut : step.Outcome,
+            Outcome = outcome,
+            ErrorCode = step.ErrorCode.Length > 0 ? step.ErrorCode : WaitTracker.ErrorCode(outcome),
             Reason = step.Reason,
             Status = status,
             Elapsed = tracker.Elapsed,
@@ -415,7 +417,7 @@ public class GameLauncher
         PluginLogInfo pluginLog = GetPluginLogInfo();
         if (TryOpenClient(out ValheimClient client))
         {
-            using (client)
+            try
             {
                 connected = true;
                 Dictionary<string, string> statusDetails = client.GetStatusDetails();
@@ -450,6 +452,19 @@ public class GameLauncher
                     ConnectedServer = server,
                     PluginLog = pluginLog
                 };
+            }
+            catch (Exception ex) when (ex is IOException || ex is System.Net.Sockets.SocketException || ex is ObjectDisposedException || ex is InvalidOperationException)
+            {
+                // The game went away between the greeting and the answer (it exited, or the
+                // tunnel to it closed): this poll found no plugin, which a wait counts as such.
+                connected = false;
+                state = "Unknown";
+                connectionStatus = "";
+                server = "";
+            }
+            finally
+            {
+                client.Dispose();
             }
         }
 
@@ -671,6 +686,9 @@ public class GameStatus
 public class WaitResult
 {
     public WaitOutcome Outcome { get; set; }
+
+    /// <summary>"" when reached; otherwise timeout, stalled, unreachable, game_exited or plugin_lost.</summary>
+    public string ErrorCode { get; set; } = "";
     public string Reason { get; set; } = "";
     public GameStatus Status { get; set; } = new();
     public TimeSpan Elapsed { get; set; }

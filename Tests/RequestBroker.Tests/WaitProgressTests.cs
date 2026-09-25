@@ -17,6 +17,7 @@ public class WaitProgressTests
         public WaitOutcome Outcome { get; init; }
         public double At { get; init; }
         public string Reason { get; init; } = "";
+        public string ErrorCode { get; init; } = "";
         public List<WaitHeartbeat> Heartbeats { get; init; } = new();
     }
 
@@ -29,7 +30,7 @@ public class WaitProgressTests
             WaitStep step = tracker.Observe(statusAt(t), T0.AddSeconds(t));
             if (step.Outcome != WaitOutcome.Waiting)
             {
-                return new Run { Outcome = step.Outcome, At = t, Reason = step.Reason, Heartbeats = tracker.Heartbeats };
+                return new Run { Outcome = step.Outcome, At = t, Reason = step.Reason, ErrorCode = step.ErrorCode, Heartbeats = tracker.Heartbeats };
             }
         }
 
@@ -155,26 +156,168 @@ public class WaitProgressTests
         Assert.Equal(WaitOutcome.Waiting, run.Outcome);
     }
 
+    // --- a game that goes away ------------------------------------------------------
+
+    /// <summary>A game on this machine: its process is seen, and its plugin answers when `answering`.</summary>
+    private static GameStatus Local(string state, string phase, bool answering = true)
+    {
+        return new GameStatus
+        {
+            IsRunning = true,
+            ProcessSeenLocally = true,
+            IsConnected = answering,
+            State = answering ? state : "Unknown",
+            LoadPhase = answering ? phase : "",
+            ConnectionStatus = answering ? "Connected" : ""
+        };
+    }
+
+    /// <summary>A game through a tunnel (or a dedicated server under another process name): no local process.</summary>
+    private static GameStatus Remote(string state, string phase) => Status(state, phase);
+
+    private static GameStatus Gone() => new GameStatus { IsRunning = false };
+
     [Fact]
-    public void TheGameStoppingDuringTheWaitIsUnreachable()
+    public void ALocalGameThatExitsEndsTheWaitWithinSecondsNotAtTheStall()
+    {
+        // The game crashes at 10 s during a load; the stall window is 120 s.
+        Run run = Observe(WaitTarget.InWorld, Policy(600, stall: 120), t =>
+            t < 10 ? Local("InWorldNoPlayer", "loading_active_area") : Gone(), until: 600);
+
+        Assert.Equal(WaitOutcome.Lost, run.Outcome);
+        Assert.Equal("game_exited", run.ErrorCode);
+        Assert.InRange(run.At, 10 + WaitPolicy.LostAfter.TotalSeconds, 10 + WaitPolicy.LostAfter.TotalSeconds + 2);
+        Assert.Contains("exited", run.Reason);
+        Assert.Equal(CliExitCode.GameLost, WaitTracker.ExitCode(run.Outcome));
+    }
+
+    [Fact]
+    public void AGameThatCrashesBeforeItsPluginAnswersHasExitedToo()
+    {
+        // Seen starting (process, no plugin yet), then gone: something that was there is lost.
+        Run run = Observe(WaitTarget.PluginServer, Policy(300), t =>
+            t < 20 ? Local("", "", answering: false) : Gone(), until: 300);
+
+        Assert.Equal(WaitOutcome.Lost, run.Outcome);
+        Assert.Equal("game_exited", run.ErrorCode);
+        Assert.True(run.At <= 26, $"lost only at {run.At}s");
+    }
+
+    [Fact]
+    public void ARemotePluginThatStopsAnsweringIsLost()
+    {
+        // Through a tunnel: no local process ever; the plugin answers until 30 s, then is refused.
+        Run run = Observe(WaitTarget.InWorld, Policy(900, stall: 300), t =>
+            t < 30 ? Remote("InWorldNoPlayer", "generating_locations") : Gone(), until: 900);
+
+        Assert.Equal(WaitOutcome.Lost, run.Outcome);
+        Assert.Equal("plugin_lost", run.ErrorCode);
+        Assert.InRange(run.At, 30 + WaitPolicy.LostAfter.TotalSeconds, 30 + WaitPolicy.LostAfter.TotalSeconds + 2);
+        Assert.Contains("has not answered for 3 polls", run.Reason);
+    }
+
+    [Fact]
+    public void APluginThatStopsWhileTheProcessStaysIsLostAndSaysSo()
     {
         Run run = Observe(WaitTarget.InWorld, Policy(300), t =>
-            t < 10 ? Status("InWorldNoPlayer", "loading_active_area") : new GameStatus { IsRunning = false }, until: 300);
+            t < 10 ? Local("InWorldNoPlayer", "respawning") : Local("", "", answering: false), until: 300);
 
-        Assert.Equal(WaitOutcome.Unreachable, run.Outcome);
-        Assert.InRange(run.At, 10 + WaitPolicy.UnreachableGrace.TotalSeconds, 10 + WaitPolicy.UnreachableGrace.TotalSeconds + 2);
-        Assert.Contains("stopped running", run.Reason);
+        Assert.Equal(WaitOutcome.Lost, run.Outcome);
+        Assert.Equal("plugin_lost", run.ErrorCode);
+        Assert.Contains("process is still here", run.Reason);
+    }
+
+    [Fact]
+    public void AGameThatNeverCameUpIsStillAwaitedNotLost()
+    {
+        // wait --for plugin-server started ahead of the launch: nothing was there to lose.
+        Run run = Observe(WaitTarget.PluginServer, Policy(120), _ => Gone(), until: 120);
+
+        Assert.Equal(WaitOutcome.TimedOut, run.Outcome);
+        Assert.Equal(120, run.At);
+    }
+
+    [Fact]
+    public void AGameStartingSlowlyIsAwaitedUntilItsPluginAnswers()
+    {
+        // Process at 10 s, plugin at 70 s: the long stretch without an answer is a start, not a loss.
+        Run run = Observe(WaitTarget.PluginServer, Policy(300), t =>
+            t < 10 ? Gone() : t < 70 ? Local("", "", answering: false) : Local("Unknown", "unknown"), until: 300);
+
+        Assert.Equal(WaitOutcome.Reached, run.Outcome);
+        Assert.Equal(70, run.At);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void OneOrTwoFailedPollsBetweenAnswersAreABlip(int failedPolls)
+    {
+        // A tunnel hiccup at 20 s; the world is up at 40 s.
+        double blipEnd = 20 + failedPolls * 2;
+        Run run = Observe(WaitTarget.InWorld, Policy(300), t =>
+            t >= 20 && t < blipEnd ? Gone()
+            : t < 40 ? Remote("InWorldNoPlayer", "loading_active_area")
+            : Remote("InWorld", "ready"), until: 300);
+
+        Assert.Equal(WaitOutcome.Reached, run.Outcome);
+        Assert.Equal(40, run.At);
+    }
+
+    [Fact]
+    public void FastPollsNeedTheWholeLossWindowToo()
+    {
+        // --interval 250ms: three failed polls come within a second, which is still a blip.
+        WaitTracker tracker = new WaitTracker(WaitTarget.InWorld, Policy(300), T0);
+        Assert.Equal(WaitOutcome.Waiting, tracker.Observe(Remote("InWorldNoPlayer", "respawning"), T0).Outcome);
+        for (int i = 1; i <= 4; i++)
+        {
+            Assert.Equal(WaitOutcome.Waiting, tracker.Observe(Gone(), T0.AddSeconds(i * 0.25)).Outcome);
+        }
+
+        Assert.Equal(WaitOutcome.Waiting, tracker.Observe(Remote("InWorldNoPlayer", "respawning"), T0.AddSeconds(1.25)).Outcome);
+        WaitStep step = new WaitStep();
+        for (int i = 1; i <= 20 && step.Outcome == WaitOutcome.Waiting; i++)
+        {
+            step = tracker.Observe(Gone(), T0.AddSeconds(1.25 + i * 0.25));
+        }
+
+        Assert.Equal(WaitOutcome.Lost, step.Outcome);
+        Assert.Equal("plugin_lost", step.ErrorCode);
+    }
+
+    [Fact]
+    public void AllowUnreachableWaitsThroughARestart()
+    {
+        // Someone else restarts the game: out 10-60 s, in a world again at 90 s.
+        Run run = Observe(WaitTarget.InWorld, Policy(300, stall: 0, allowUnreachable: true), t =>
+            t < 10 ? Local("InWorldNoPlayer", "respawning")
+            : t < 60 ? Gone()
+            : t < 90 ? Local("MainMenu", "main_menu")
+            : Local("InWorld", "ready"), until: 300);
+
+        Assert.Equal(WaitOutcome.Reached, run.Outcome);
+        Assert.Equal(90, run.At);
     }
 
     [Fact]
     public void AStoppedGameCanStillBeWaitedForAsAProcess()
     {
-        // `wait --for process` is how a script waits for a relaunch.
-        GameStatus stopped = new GameStatus { IsRunning = false };
+        // `wait --for process` is how a script waits for a relaunch after an exit.
+        Run run = Observe(WaitTarget.Process, Policy(300, stall: 0), t =>
+            t < 60 ? Gone() : Local("", "", answering: false), until: 300);
 
-        Assert.Equal("", WaitReachability.Why(WaitTarget.Process, stopped, seenRunning: true));
-        Assert.NotEqual("", WaitReachability.Why(WaitTarget.Terminal, stopped, seenRunning: true));
-        Assert.Equal("", WaitReachability.Why(WaitTarget.Terminal, stopped, seenRunning: false));
+        Assert.Equal(WaitOutcome.Reached, run.Outcome);
+        Assert.Equal(60, run.At);
+    }
+
+    [Fact]
+    public void TheLaunchAndJoinWaitsKeepWaitingForTheirTimeout()
+    {
+        Run run = Observe(WaitTarget.InWorld, WaitPolicy.TimeoutOnly(TimeSpan.FromSeconds(120), TimeSpan.Zero), t =>
+            t < 10 ? Local("InWorldNoPlayer", "respawning") : Gone(), until: 200);
+
+        Assert.Equal(WaitOutcome.TimedOut, run.Outcome);
     }
 
     [Fact]
@@ -403,6 +546,7 @@ public class WaitProgressTests
     [InlineData(WaitOutcome.TimedOut, CliExitCode.Timeout, "timeout")]
     [InlineData(WaitOutcome.Stalled, CliExitCode.Timeout, "stalled")]
     [InlineData(WaitOutcome.Unreachable, CliExitCode.GameNotReady, "unreachable")]
+    [InlineData(WaitOutcome.Lost, CliExitCode.GameLost, "plugin_lost")]
     public void EachOutcomeHasItsCodes(WaitOutcome outcome, CliExitCode exitCode, string errorCode)
     {
         Assert.Equal(exitCode, WaitTracker.ExitCode(outcome));

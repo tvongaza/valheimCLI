@@ -823,7 +823,7 @@ class Program
         GameStatus status = result.Status;
         bool ok = result.Outcome == WaitOutcome.Reached;
         string targetName = WaitTargets.ToName(target);
-        string errorCode = WaitTracker.ErrorCode(result.Outcome);
+        string errorCode = result.ErrorCode;
         int exitCode = (int)WaitTracker.ExitCode(result.Outcome);
 
         if (_json)
@@ -875,6 +875,7 @@ class Program
             WaitOutcome.Reached => $"Reached {targetName}.",
             WaitOutcome.Stalled => $"Stalled waiting for {targetName}: {reason}.",
             WaitOutcome.Unreachable => $"Cannot reach {targetName}: {reason}.",
+            WaitOutcome.Lost => $"Lost the game waiting for {targetName}: {reason}.",
             _ => $"Timed out waiting for {targetName}."
         };
     }
