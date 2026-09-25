@@ -394,6 +394,21 @@ public class WaitProgressTests
         Assert.Contains("ErrorPassword", run.Reason);
     }
 
+    [Theory]
+    [InlineData("ErrorBanned")]
+    [InlineData("ErrorFull")]
+    [InlineData("ErrorKicked")]
+    [InlineData("ErrorConnectFailed")]
+    public void EveryErrorStatusEndsTheAttempt(string connection)
+    {
+        Run run = Observe(WaitTarget.ServerConnected, Policy(180), t =>
+            t < 4 ? Status("Loading", "connecting_screen", "Connecting") : MainMenu(connection), until: 180);
+
+        Assert.Equal(WaitOutcome.Unreachable, run.Outcome);
+        Assert.Equal(4, run.At);
+        Assert.Contains(connection, run.Reason);
+    }
+
     [Fact]
     public void ThePreviousAttemptsRejectionIsNotThisOnes()
     {

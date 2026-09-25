@@ -387,6 +387,36 @@ public class GameLauncher
             return "Server password was rejected.";
         }
 
+        if (connectionStatus.Contains("errorbanned"))
+        {
+            return "Refused: banned from this server, or not on its permitted list.";
+        }
+
+        if (connectionStatus.Contains("errorfull"))
+        {
+            return "Refused: the server is full.";
+        }
+
+        if (connectionStatus.Contains("erroralreadyconnected"))
+        {
+            return "Refused: this player is already connected to the server.";
+        }
+
+        if (connectionStatus.Contains("errorkicked"))
+        {
+            return "Kicked by the server.";
+        }
+
+        if (connectionStatus.Contains("errorplatformexcluded") || connectionStatus.Contains("errorcrossplayprivilege"))
+        {
+            return "Refused: the server does not accept this platform (crossplay).";
+        }
+
+        if (connectionStatus.Contains("errorconnectfailed"))
+        {
+            return "The connection to the server could not be made.";
+        }
+
         if (connectionStatus.Contains("disconnected"))
         {
             return "Disconnected before server connection completed.";
@@ -654,8 +684,13 @@ public class GameStatus
     /// existing one (straight after loading), unlike the log line written only when locations are generated.
     /// </summary>
     public bool ServerReady => IsConnected && LocationsGenerated && Listening && !ShuttingDown;
-    public bool HasUnrecoverableConnectionFailure => ConnectionStatus.Contains("ErrorVersion", StringComparison.OrdinalIgnoreCase) ||
-                                                     ConnectionStatus.Contains("ErrorPassword", StringComparison.OrdinalIgnoreCase);
+    /// <summary>
+    /// The connection attempt is over: every ZNet.ConnectionStatus that starts with Error (wrong version or
+    /// password, banned or not permitted, full, kicked, already connected, platform or crossplay refused, failed
+    /// or dropped) ends that attempt, and only a new join can connect. A banned player used to wait out the whole
+    /// join timeout on ErrorBanned (25 Sep 2026).
+    /// </summary>
+    public bool HasUnrecoverableConnectionFailure => ConnectionStatus.StartsWith("Error", StringComparison.OrdinalIgnoreCase);
     public string DiagnosticCode
     {
         get

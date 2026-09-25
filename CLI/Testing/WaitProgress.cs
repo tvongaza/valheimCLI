@@ -356,7 +356,7 @@ public static class WaitReachability
     {
         if (target == WaitTarget.ServerConnected && connectionFailureCounts && status.HasUnrecoverableConnectionFailure)
         {
-            return $"the server rejected the connection (connection={status.ConnectionStatus}); fix the version or password and join again";
+            return $"the connection attempt ended (connection={status.ConnectionStatus}); fix the cause (version, password, ban, a full server) and join again";
         }
 
         // A dedicated server never has a main menu, a local player or a connection to
