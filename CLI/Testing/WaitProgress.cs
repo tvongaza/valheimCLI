@@ -497,6 +497,7 @@ public sealed class WaitTracker
     private DateTime _lastBeat;
     private bool _seenRunning;
     private bool _connectionMoved;
+    private string? _initialConnectionStatus;
     private readonly WaitLoss _loss = new();
 
     public WaitTracker(WaitTarget target, WaitPolicy policy, DateTime start)
@@ -534,12 +535,13 @@ public sealed class WaitTracker
             return new WaitStep { Outcome = WaitOutcome.Reached };
         }
 
-        // A connection failure is a rejection of THIS attempt only once the wait has seen the status be something
-        // else: the game keeps the last attempt's ErrorPassword until a new connection starts, so a join that
-        // polls before its connection begins would otherwise fail on the previous attempt's answer (25 Sep 2026:
-        // a right-password join right after a wrong one reported "rejected" without reaching the server). A new
-        // attempt always passes through Connecting, so a real rejection still ends the wait at once.
-        _connectionMoved |= !status.HasUnrecoverableConnectionFailure;
+        // Ignore an unchanged error left over from the previous join. Connecting
+        // can occur entirely between polls; a different rejection is also evidence
+        // that the connection advanced. Identical errors still need a sampled
+        // transition (the status protocol has no attempt id).
+        _initialConnectionStatus ??= status.ConnectionStatus;
+        _connectionMoved |= !status.HasUnrecoverableConnectionFailure ||
+            !string.Equals(_initialConnectionStatus, status.ConnectionStatus, StringComparison.Ordinal);
         string rejected = WaitReachability.Rejected(_target, status, connectionFailureCounts: _connectionMoved);
         if (rejected.Length > 0)
         {

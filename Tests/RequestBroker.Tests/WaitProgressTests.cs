@@ -480,6 +480,18 @@ public class WaitProgressTests
     }
 
     [Fact]
+    public void ADifferentRejectionIsThisAttemptsEvenWhenConnectingIsNeverSeen()
+    {
+        // The new attempt starts and is refused between two polls: the status goes from the previous
+        // attempt's ErrorPassword straight to ErrorVersion. A different rejection cannot be the old one.
+        Run run = Observe(WaitTarget.ServerConnected, WaitPolicy.TimeoutOnly(TimeSpan.FromMinutes(5), TimeSpan.Zero), t =>
+            t < 2 ? MainMenu("ErrorPassword") : MainMenu("ErrorVersion"), until: 300);
+
+        Assert.Equal(WaitOutcome.Unreachable, run.Outcome);
+        Assert.Equal(2, run.At);
+    }
+
+    [Fact]
     public void TimeoutOnlyPolicyNeverStallsNorGivesUp()
     {
         Run run = Observe(WaitTarget.MainMenu, WaitPolicy.TimeoutOnly(TimeSpan.FromSeconds(180), TimeSpan.Zero), _ => InWorld(), until: 200);
