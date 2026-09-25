@@ -617,6 +617,7 @@ namespace valheimCLI
             public object?[] Values = null!;
             public int Cost;
             public int DefaultsUsed;
+            public int OutputsUsed;
         }
 
         /// <summary>
@@ -626,7 +627,8 @@ namespace valheimCLI
         /// left off) and every argument converts to its parameter. Among the
         /// fits the lowest total conversion cost wins (see CallValues.Cost),
         /// then the one that leaves fewest optional parameters to their
-        /// defaults. A tie is reported, not guessed.
+        /// defaults, then the one needing fewest implicit out parameters.
+        /// A remaining tie is reported, not guessed.
         /// </summary>
         public static bool TrySelectOverload(IList<MethodInfo> methods, IList<Token> arguments, out Choice? choice, out Failure? failure)
         {
@@ -695,7 +697,8 @@ namespace valheimCLI
                     conversionFailures.Add(failed);
                     continue;
                 }
-                fits.Add(new Candidate { Method = method, Values = values, Cost = cost, DefaultsUsed = inputs.Count - arguments.Count });
+                fits.Add(new Candidate { Method = method, Values = values, Cost = cost,
+                    DefaultsUsed = inputs.Count - arguments.Count, OutputsUsed = parameters.Length - inputs.Count });
             }
 
             if (fits.Count == 0)
@@ -720,8 +723,8 @@ namespace valheimCLI
             }
 
             List<Candidate> best = fits
-                .GroupBy(c => (c.Cost, c.DefaultsUsed))
-                .OrderBy(g => g.Key.Cost).ThenBy(g => g.Key.DefaultsUsed)
+                .GroupBy(c => (c.Cost, c.DefaultsUsed, c.OutputsUsed))
+                .OrderBy(g => g.Key.Cost).ThenBy(g => g.Key.DefaultsUsed).ThenBy(g => g.Key.OutputsUsed)
                 .First().ToList();
             if (best.Count > 1)
             {

@@ -188,13 +188,18 @@ Other parameter types (a `GameObject`, a list) accept only `null`.
 ### Overloads
 
 An overload fits when the argument count lies between its required and its
-total parameters and every argument converts. Of the fits, the most natural
+total input parameters and every argument converts. Of the fits, the most natural
 reading wins: `5` is an `int` before a `long`, before a smaller integer type,
 before a `double`, an enum or a string; `1.5` is a `double` before a `float`;
 a quoted argument is a string first. On a tie the one that leaves fewest
-optional parameters to their defaults wins. A remaining tie is reported as
-`ambiguous_overload` with the tied signatures; quote a string or add a
-decimal point to choose. When overloads exist the `OK:` line names the one
+optional parameters to their defaults wins, then the one needing fewer implicit
+`out` parameters. For example, `GetHeight(float, float)` wins over
+`GetHeight(float, float, out Color)` for two coordinates. Methods with `out`
+parameters remain callable and still print their outputs.
+
+A remaining tie is reported as `ambiguous_overload` with the tied signatures;
+where the input types differ, quoting a string or adding a decimal point can
+choose between them. When overloads exist the `OK:` line names the one
 used: `overload=(Vector3,Vector3)`.
 
 ## Output
