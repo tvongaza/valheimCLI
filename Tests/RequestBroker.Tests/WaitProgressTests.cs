@@ -62,7 +62,7 @@ public class WaitProgressTests
     }
 
     private static GameStatus InWorld(string connection = "Connected") => Status("InWorld", "ready", connection);
-    private static GameStatus MainMenu() => Status("MainMenu", "main_menu", "");
+    private static GameStatus MainMenu(string connection = "") => Status("MainMenu", "main_menu", connection);
 
     // --- unreachable -------------------------------------------------------------
 
@@ -385,11 +385,35 @@ public class WaitProgressTests
     [Fact]
     public void AServerRejectionEndsTheWaitAtOnceEvenWhenUnreachableIsAllowed()
     {
-        Run run = Observe(WaitTarget.ServerConnected, Policy(180, allowUnreachable: true), _ => Status("Loading", "connecting_screen", "ErrorPassword"), until: 180);
+        // The attempt connects (Connecting at 0 s), and the server refuses the password at 4 s.
+        Run run = Observe(WaitTarget.ServerConnected, Policy(180, allowUnreachable: true), t =>
+            t < 4 ? Status("Loading", "connecting_screen", "Connecting") : Status("Loading", "connecting_screen", "ErrorPassword"), until: 180);
 
         Assert.Equal(WaitOutcome.Unreachable, run.Outcome);
-        Assert.Equal(0, run.At);
+        Assert.Equal(4, run.At);
         Assert.Contains("ErrorPassword", run.Reason);
+    }
+
+    [Fact]
+    public void ThePreviousAttemptsRejectionIsNotThisOnes()
+    {
+        // A wrong-password join, then a join with the right one: the game still says ErrorPassword until the new
+        // connection starts (2 s later), then connects. The stale answer must not end the wait.
+        Run run = Observe(WaitTarget.ServerConnected, Policy(180), t =>
+            t < 2 ? MainMenu("ErrorPassword") : t < 10 ? Status("Loading", "connecting_screen", "Connecting") : InWorld(), until: 180);
+
+        Assert.Equal(WaitOutcome.Reached, run.Outcome);
+        Assert.Equal(10, run.At);
+    }
+
+    [Fact]
+    public void ThePreviousRejectionThenANewOneEndsTheWaitWhenTheNewOneComes()
+    {
+        Run run = Observe(WaitTarget.ServerConnected, Policy(180), t =>
+            t < 2 ? MainMenu("ErrorPassword") : t < 6 ? Status("Loading", "connecting_screen", "Connecting") : Status("Loading", "connecting_screen", "ErrorPassword"), until: 180);
+
+        Assert.Equal(WaitOutcome.Unreachable, run.Outcome);
+        Assert.Equal(6, run.At);
     }
 
     [Fact]

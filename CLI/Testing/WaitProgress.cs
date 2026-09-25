@@ -352,9 +352,9 @@ public static class WaitReachability
     /// game is a dedicated server and the target is a client's: no amount of waiting
     /// reaches it. Definitive, so it ends the wait at once.
     /// </summary>
-    public static string Rejected(WaitTarget target, GameStatus status)
+    public static string Rejected(WaitTarget target, GameStatus status, bool connectionFailureCounts = true)
     {
-        if (target == WaitTarget.ServerConnected && status.HasUnrecoverableConnectionFailure)
+        if (target == WaitTarget.ServerConnected && connectionFailureCounts && status.HasUnrecoverableConnectionFailure)
         {
             return $"the server rejected the connection (connection={status.ConnectionStatus}); fix the version or password and join again";
         }
@@ -479,6 +479,7 @@ public sealed class WaitTracker
     private DateTime _changedAt;
     private DateTime _lastBeat;
     private bool _seenRunning;
+    private bool _connectionMoved;
     private readonly WaitLoss _loss = new();
 
     public WaitTracker(WaitTarget target, WaitPolicy policy, DateTime start)
@@ -516,7 +517,13 @@ public sealed class WaitTracker
             return new WaitStep { Outcome = WaitOutcome.Reached };
         }
 
-        string rejected = WaitReachability.Rejected(_target, status);
+        // A connection failure is a rejection of THIS attempt only once the wait has seen the status be something
+        // else: the game keeps the last attempt's ErrorPassword until a new connection starts, so a join that
+        // polls before its connection begins would otherwise fail on the previous attempt's answer (25 Sep 2026:
+        // a right-password join right after a wrong one reported "rejected" without reaching the server). A new
+        // attempt always passes through Connecting, so a real rejection still ends the wait at once.
+        _connectionMoved |= !status.HasUnrecoverableConnectionFailure;
+        string rejected = WaitReachability.Rejected(_target, status, connectionFailureCounts: _connectionMoved);
         if (rejected.Length > 0)
         {
             return Ended(WaitOutcome.Unreachable, rejected);
