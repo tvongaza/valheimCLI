@@ -267,7 +267,7 @@ public sealed class WaitHeartbeat
     public double TimeoutSeconds { get; init; }
     public string Target { get; init; } = "";
 
-    /// <summary>not_running or starting (running, the plugin not answering yet); null once the plugin answers.</summary>
+    /// <summary>not_running or starting (running, the plugin not answering yet), not_answering for a remote game; null once the plugin answers.</summary>
     public string? Game { get; init; }
     public string State { get; init; } = "";
     public string Phase { get; init; } = "";
@@ -545,10 +545,15 @@ public sealed class WaitTracker
         }
 
         // A game that has not been seen running has not started, which is not a stall:
-        // the wait may have been started ahead of the launch.
-        if (_policy.Stall > TimeSpan.Zero && _seenRunning && Unchanged >= _policy.Stall)
+        // the wait may have been started ahead of the launch. A remote game is never seen
+        // until its plugin answers (no process or log here tells a start from a failed
+        // one), so its silence stalls like any other unchanged status.
+        if (_policy.Stall > TimeSpan.Zero && (_seenRunning || status.Remote) && Unchanged >= _policy.Stall)
         {
-            return Ended(WaitOutcome.Stalled, $"nothing the game reports changed for {WaitDurations.Format(Unchanged)} (stall window {WaitDurations.Format(_policy.Stall)})");
+            string window = $"{WaitDurations.Format(Unchanged)} (stall window {WaitDurations.Format(_policy.Stall)})";
+            return Ended(WaitOutcome.Stalled, _seenRunning
+                ? $"nothing the game reports changed for {window}"
+                : $"nothing answered on the port for {window}; this machine cannot see a remote game's process or log: check the tunnel, that the game started, and that valheimCLI loaded (the BepInEx log on the game's machine)");
         }
 
         WaitHeartbeat? beat = null;
@@ -559,7 +564,8 @@ public sealed class WaitTracker
                 ElapsedSeconds = Math.Round(Elapsed.TotalSeconds),
                 TimeoutSeconds = Math.Round(_policy.Timeout.TotalSeconds),
                 Target = WaitTargets.ToName(_target),
-                Game = !status.IsRunning ? "not_running" : !status.IsConnected ? "starting" : null,
+                Game = status.Remote && !status.IsConnected ? "not_answering"
+                    : !status.IsRunning ? "not_running" : !status.IsConnected ? "starting" : null,
                 State = status.State,
                 Phase = status.LoadPhase,
                 ConnectionStatus = status.ConnectionStatus,

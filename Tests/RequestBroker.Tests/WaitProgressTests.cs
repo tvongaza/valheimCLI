@@ -237,6 +237,68 @@ public class WaitProgressTests
         Assert.Equal(120, run.At);
     }
 
+    /// <summary>A game behind --remote: nothing about it is known until its plugin answers.</summary>
+    private static GameStatus Silent() => new GameStatus { Remote = true };
+
+    private static GameStatus RemoteAnswering(string state, string phase)
+    {
+        GameStatus status = Status(state, phase);
+        status.Remote = true;
+        return status;
+    }
+
+    [Fact]
+    public void ARemoteGameThatNeverAnswersStallsInsteadOfWaitingOutTheTimeout()
+    {
+        // A server whose plugin never loaded: the tunnel accepts, nothing answers.
+        Run run = Observe(WaitTarget.ServerReady, Policy(600, stall: 120), _ => Silent(), until: 600);
+
+        Assert.Equal(WaitOutcome.Stalled, run.Outcome);
+        Assert.Equal("stalled", run.ErrorCode);
+        Assert.Equal(120, run.At);
+        Assert.Contains("nothing answered on the port", run.Reason);
+        Assert.Contains("valheimCLI loaded", run.Reason);
+        Assert.All(run.Heartbeats, beat => Assert.Equal("not_answering", beat.Game));
+    }
+
+    [Fact]
+    public void ARemoteGameThatAnswersWithinTheStallWindowIsReached()
+    {
+        Run run = Observe(WaitTarget.ServerReady, Policy(600, stall: 120), t =>
+            t < 90 ? Silent() : ServerUp(), until: 600);
+
+        Assert.Equal(WaitOutcome.Reached, run.Outcome);
+        Assert.Equal(90, run.At);
+    }
+
+    [Fact]
+    public void ARemoteGameThatStopsAnsweringIsLostNotStalled()
+    {
+        Run run = Observe(WaitTarget.ServerReady, Policy(600, stall: 120), t =>
+            t < 30 ? RemoteAnswering("InWorldNoPlayer", "generating_locations") : Silent(), until: 600);
+
+        Assert.Equal(WaitOutcome.Lost, run.Outcome);
+        Assert.Equal("plugin_lost", run.ErrorCode);
+        Assert.True(run.At <= 30 + WaitPolicy.LostAfter.TotalSeconds + 2, $"lost only at {run.At}s");
+    }
+
+    [Fact]
+    public void ARemoteWaitWithTheStallDisabledWaitsForItsTimeout()
+    {
+        Run run = Observe(WaitTarget.ServerReady, Policy(300, stall: 0), _ => Silent(), until: 300);
+
+        Assert.Equal(WaitOutcome.TimedOut, run.Outcome);
+    }
+
+    private static GameStatus ServerUp()
+    {
+        GameStatus status = RemoteAnswering("InWorldNoPlayer", "ready");
+        status.Dedicated = true;
+        status.LocationsGenerated = true;
+        status.Listening = true;
+        return status;
+    }
+
     [Fact]
     public void AGameStartingSlowlyIsAwaitedUntilItsPluginAnswers()
     {

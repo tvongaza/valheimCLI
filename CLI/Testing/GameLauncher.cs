@@ -10,18 +10,26 @@ public class GameLauncher
     private readonly int _port;
     private readonly string? _connect;
     private readonly string? _password;
+    private readonly bool _remote;
     private Process? _gameProcess;
 
-    public GameLauncher(string? gamePath = null, string host = ConnectionDefaults.Host, int port = ConnectionDefaults.Port, string? connect = null, string? password = null)
+    /// <param name="remote">
+    /// The game is on another machine (reached through a tunnel on this machine's port).
+    /// Its process and its BepInEx log are not here, so none of this machine's are read:
+    /// a local Valheim (someone playing) would otherwise stand in for the remote game.
+    /// </param>
+    public GameLauncher(string? gamePath = null, string host = ConnectionDefaults.Host, int port = ConnectionDefaults.Port, string? connect = null, string? password = null, bool remote = false)
     {
         _gamePath = ResolveGamePath(gamePath);
         _host = host;
         _port = port;
         _connect = connect;
         _password = password;
+        _remote = remote;
     }
 
     public string GamePath => _gamePath;
+    public bool Remote => _remote;
     public bool HasServerConnect => !string.IsNullOrWhiteSpace(_connect);
 
     /// <summary>
@@ -67,6 +75,11 @@ public class GameLauncher
     /// </summary>
     public bool IsGameRunning()
     {
+        if (_remote)
+        {
+            return false;
+        }
+
         return ProcessExists("valheim") || ProcessExists("Valheim") || ProcessExists("valheim.x86_64");
     }
 
@@ -126,6 +139,12 @@ public class GameLauncher
     /// </summary>
     public bool LaunchGame()
     {
+        if (_remote)
+        {
+            Console.Error.WriteLine("Cannot launch a remote game (--remote): start it on its own machine.");
+            return false;
+        }
+
         string scriptPath = Path.Combine(_gamePath, "run_bepinex.sh");
 
         if (!File.Exists(scriptPath))
@@ -381,6 +400,13 @@ public class GameLauncher
     /// </summary>
     public void StopGame()
     {
+        // A remote game is not ours to stop, and killing by name would stop a local one.
+        if (_remote)
+        {
+            Console.Error.WriteLine("Not stopping a remote game (--remote): stop it on its own machine.");
+            return;
+        }
+
         // First try to kill the tracked process
         if (_gameProcess != null && !_gameProcess.HasExited)
         {
@@ -435,6 +461,7 @@ public class GameLauncher
                 {
                     IsRunning = GameStatus.RunningFrom(running, connected),
                     ProcessSeenLocally = running,
+                    Remote = _remote,
                     IsConnected = connected,
                     GamePath = _gamePath,
                     Host = _host,
@@ -474,6 +501,7 @@ public class GameLauncher
         {
             IsRunning = running,
             ProcessSeenLocally = running,
+            Remote = _remote,
             IsConnected = connected,
             GamePath = _gamePath,
             Host = _host,
@@ -521,6 +549,11 @@ public class GameLauncher
 
     public PluginLogInfo GetPluginLogInfo()
     {
+        if (_remote)
+        {
+            return new PluginLogInfo();
+        }
+
         string logPath = Path.Combine(_gamePath, "BepInEx", "LogOutput.log");
         PluginLogInfo info = new() { Path = logPath };
         if (!File.Exists(logPath))
@@ -572,6 +605,12 @@ public class GameStatus
     /// <summary>A Valheim client process was found on this machine.</summary>
     public bool ProcessSeenLocally { get; set; }
 
+    /// <summary>
+    /// The game is on another machine (--remote): only its plugin's answers describe it,
+    /// so a game that does not answer is not known to be starting or stopped.
+    /// </summary>
+    public bool Remote { get; set; }
+
     public static bool RunningFrom(bool processSeenLocally, bool pluginAnswered) => processSeenLocally || pluginAnswered;
 
     public bool IsConnected { get; set; }
@@ -621,6 +660,11 @@ public class GameStatus
     {
         get
         {
+            if (Remote && !IsConnected)
+            {
+                return "remote_not_answering";
+            }
+
             if (!IsRunning)
             {
                 return "game_not_running";
@@ -657,6 +701,8 @@ public class GameStatus
             string code = DiagnosticCode;
             switch (code)
             {
+                case "remote_not_answering":
+                    return $"Nothing answers on {Host}:{Port}, and this machine cannot see a remote game's process or log.";
                 case "game_not_running":
                     return "Valheim process is not running.";
                 case "wrong_port":

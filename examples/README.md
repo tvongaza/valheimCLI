@@ -33,7 +33,8 @@ in its header; copy them into your own project and change what you need.
 
 - **Remote games.** The mod listens on `127.0.0.1` only. Open a tunnel with
   `remote-tunnel.sh open user@host 5556` and point any script at it with
-  `VALHEIM_CLI_PORT=5556`. Log files are read on the machine that writes
+  `VALHEIM_CLI_PORT=5556`. Give `valheim-cli` `--remote` for a game behind
+  a tunnel, so it never mistakes a game running on this machine for it. Log files are read on the machine that writes
   them: `VALHEIM_SSH=user@host VALHEIM_LOG=<path there>`.
 - **Waits return on the event.** A script waits for the game to report
   what it is waiting for (an async `cli_*` command, `valheim-cli wait

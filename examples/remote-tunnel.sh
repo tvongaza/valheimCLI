@@ -14,7 +14,7 @@
 # remote game:
 #
 #   remote-tunnel.sh open me@gamebox 5556
-#   valheim-cli --port 5556 --status
+#   valheim-cli --port 5556 --remote --status
 #   VALHEIM_CLI_PORT=5556 ./examples/<script>.sh ...
 #
 # Logs are files, not commands: follow a remote log with

@@ -21,6 +21,7 @@ class Program
     private static TimeSpan _progress = WaitPolicy.DefaultProgress;
     private static TimeSpan? _stall = null;
     private static bool _allowUnreachable = false;
+    private static bool _remote = false;
     private static int _retryUnstarted = 0;
     private static string? _argumentError = null;
     private static string? _artifactsDir = null;
@@ -133,6 +134,10 @@ class Program
             {
                 _allowUnreachable = true;
             }
+            else if (args[i] == "--remote")
+            {
+                _remote = true;
+            }
             else if (args[i] == "--retry-unstarted" && i + 1 < args.Length)
             {
                 if (!int.TryParse(args[i + 1], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out _retryUnstarted))
@@ -153,6 +158,11 @@ class Program
                 }
                 i++; // Skip next arg
             }
+        }
+
+        if (_argumentError == null && _remote && (_launch || _stopAfter))
+        {
+            _argumentError = "--launch and --stop-after act on this machine's game; with --remote, start and stop the game on its own machine";
         }
 
         if (_argumentError != null)
@@ -179,7 +189,7 @@ class Program
         {
             if (inCommand)
             {
-                if (args[i] == "--json" || args[i] == "--allow-unreachable")
+                if (args[i] == "--json" || args[i] == "--allow-unreachable" || args[i] == "--remote")
                 {
                     continue;
                 }
@@ -211,7 +221,7 @@ class Program
             // Boolean flags
             if (args[i] == "-v" || args[i] == "--verbose" || args[i] == "--launch" || args[i] == "-l" ||
                 args[i] == "--stop-after" || args[i] == "--status" || args[i] == "--json" ||
-                args[i] == "--allow-unreachable")
+                args[i] == "--allow-unreachable" || args[i] == "--remote")
             {
                 continue;
             }
@@ -261,7 +271,7 @@ class Program
 
     static int ShowStatus()
     {
-        GameLauncher launcher = new GameLauncher(_gamePath, _host, _port, _connect, _password);
+        GameLauncher launcher = new GameLauncher(_gamePath, _host, _port, _connect, _password, _remote);
         GameStatus status = launcher.GetStatus();
 
         if (_json)
@@ -274,6 +284,7 @@ class Program
                 message = status.IsConnected ? "Connected to CLI server." : "CLI server is not connected.",
                 errorCode = status.IsConnected ? "" : status.DiagnosticCode,
                 gamePath = status.GamePath,
+                remote = status.Remote,
                 host = status.Host,
                 port = status.Port,
                 readiness = new
@@ -342,6 +353,7 @@ class Program
             "context " +
             $"game={FormatState(status.IsRunning ? "running" : "not_running")} " +
             $"local_process={ToBool(status.ProcessSeenLocally)} " +
+            $"remote={ToBool(status.Remote)} " +
             $"state={FormatState(status.State)} " +
             $"phase={FormatState(status.LoadPhase)} " +
             $"cli={status.Host}:{status.Port} " +
@@ -362,7 +374,7 @@ class Program
         }
         output.WriteLine($"diagnostic {diagnosticCode}: {status.DiagnosticMessage}");
         output.WriteLine($"next {NextStatusAction(status)}");
-        output.WriteLine($"path {status.GamePath}");
+        output.WriteLine(status.Remote ? "path (remote: this machine's game folder is not read)" : $"path {status.GamePath}");
     }
 
     static string NextStatusAction(GameStatus status)
@@ -414,6 +426,8 @@ class Program
 
         switch (status.DiagnosticCode)
         {
+            case "remote_not_answering":
+                return "Check the tunnel, that the game started on its machine, and that its BepInEx log there shows valheimCLI loaded.";
             case "game_not_running":
                 return "Start Valheim with the desired profile, then rerun valheim-cli --status.";
             case "wrong_port":
@@ -474,7 +488,7 @@ class Program
         Console.WriteLine("=======================");
 
         // Create game launcher
-        GameLauncher launcher = new GameLauncher(_gamePath, _host, _port, _connect, _password);
+        GameLauncher launcher = new GameLauncher(_gamePath, _host, _port, _connect, _password, _remote);
 
         // Create runner with options (CLI flags will override YAML settings)
         TestRunnerOptions options = new TestRunnerOptions
@@ -521,7 +535,7 @@ class Program
 
     static async Task<int> RunLaunchMode()
     {
-        GameLauncher launcher = new GameLauncher(_gamePath, _host, _port, _connect, ReadPassword());
+        GameLauncher launcher = new GameLauncher(_gamePath, _host, _port, _connect, ReadPassword(), _remote);
         List<LaunchPhase> phases = new();
 
         if (!launcher.IsGameRunning())
@@ -739,6 +753,7 @@ class Program
         Console.WriteLine("  --progress <duration> Print a wait heartbeat this often, to stderr (default 15s; 0 disables)");
         Console.WriteLine("  --stall <duration>    End a wait when nothing the game reports changes for this long (default 120s; 0 disables)");
         Console.WriteLine("  --allow-unreachable   Keep waiting in a state that needs an action (e.g. main menu while in a world)");
+        Console.WriteLine("  --remote              The game is on another machine (through a tunnel): read no local process or log; never launch or stop");
         Console.WriteLine("  --retry-unstarted <n> Resend a command up to n times when the game expired it unrun behind a busy main thread (default 0)");
         Console.WriteLine("  --artifacts <dir>     Test-run artifact directory");
         Console.WriteLine("  --var <key=value>     Set a test variable (can be used multiple times)");
@@ -761,6 +776,7 @@ class Program
         Console.WriteLine("  valheim-cli wait --for terminal --timeout 120s");
         Console.WriteLine("  valheim-cli wait --for in-world --timeout 10m --stall 3m");
         Console.WriteLine("  valheim-cli wait --for server-ready --timeout 30m");
+        Console.WriteLine("  valheim-cli -p 5556 --remote wait --for server-ready --timeout 30m");
         Console.WriteLine("  valheim-cli join --server 127.0.0.1:2456 --password-file ./password.txt --character Test");
         Console.WriteLine("  valheim-cli commands --group cli --json");
         Console.WriteLine();
@@ -852,7 +868,7 @@ class Program
             Stall = _stall ?? WaitPolicy.DefaultStall,
             AllowUnreachable = _allowUnreachable
         };
-        GameLauncher launcher = new GameLauncher(_gamePath, _host, _port, _connect, ReadPassword());
+        GameLauncher launcher = new GameLauncher(_gamePath, _host, _port, _connect, ReadPassword(), _remote);
         WaitResult result = await launcher.WaitAsync(target, policy, _interval, WriteHeartbeat);
         GameStatus status = result.Status;
         bool ok = result.Outcome == WaitOutcome.Reached;
@@ -939,7 +955,7 @@ class Program
 
         string? character = GetOption(args, "--character");
         bool createCharacter = args.Any(arg => arg.Equals("--create-character", StringComparison.OrdinalIgnoreCase));
-        GameLauncher launcher = new GameLauncher(_gamePath, _host, _port, _connect, ReadPassword());
+        GameLauncher launcher = new GameLauncher(_gamePath, _host, _port, _connect, ReadPassword(), _remote);
         JoinResult result = await launcher.JoinDirectAsync(server, ReadPassword(), character, createCharacter, _timeout, _interval, progress: _progress, onHeartbeat: WriteHeartbeat);
 
         if (_json)
