@@ -193,6 +193,7 @@ public sealed class WaitSnapshot
     public bool ActiveAreaLoaded { get; init; }
     public string ConnectionStatus { get; init; } = "";
     public string Server { get; init; } = "";
+    public bool Listening { get; init; }
 
     public static WaitSnapshot From(GameStatus status)
     {
@@ -212,7 +213,8 @@ public sealed class WaitSnapshot
             LocationCount = status.LocationCount,
             ActiveAreaLoaded = status.ActiveAreaLoaded,
             ConnectionStatus = status.ConnectionStatus,
-            Server = status.ConnectedServer
+            Server = status.ConnectedServer,
+            Listening = status.Listening
         };
     }
 
@@ -239,6 +241,7 @@ public sealed class WaitSnapshot
         Add(changes, "activeAreaLoaded", Bool(previous.ActiveAreaLoaded), Bool(ActiveAreaLoaded));
         Add(changes, "connection", previous.ConnectionStatus, ConnectionStatus);
         Add(changes, "server", previous.Server, Server);
+        Add(changes, "listening", Bool(previous.Listening), Bool(Listening));
         return changes;
     }
 
@@ -345,14 +348,22 @@ public static class WaitReachability
     }
 
     /// <summary>
-    /// The server turned the connection down for good (wrong version or password): no
-    /// amount of waiting connects. Definitive, so it ends the wait at once.
+    /// The server turned the connection down for good (wrong version or password), or the
+    /// game is a dedicated server and the target is a client's: no amount of waiting
+    /// reaches it. Definitive, so it ends the wait at once.
     /// </summary>
     public static string Rejected(WaitTarget target, GameStatus status)
     {
         if (target == WaitTarget.ServerConnected && status.HasUnrecoverableConnectionFailure)
         {
             return $"the server rejected the connection (connection={status.ConnectionStatus}); fix the version or password and join again";
+        }
+
+        // A dedicated server never has a main menu, a local player or a connection to
+        // another server: its state stays InWorldNoPlayer however long the wait.
+        if (status.Dedicated && target is WaitTarget.MainMenu or WaitTarget.InWorld or WaitTarget.LocalPlayer or WaitTarget.ServerConnected)
+        {
+            return $"this is a dedicated server, which never has a main menu, a local player or a server connection of its own ({WaitTargets.ToName(target)}); wait for server-ready";
         }
 
         return "";

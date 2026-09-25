@@ -274,7 +274,8 @@ class Program
                     mainMenu = status.MainMenuReady,
                     inWorld = status.InWorldReady,
                     localPlayer = status.LocalPlayerReady,
-                    serverConnected = status.ServerConnected
+                    serverConnected = status.ServerConnected,
+                    serverReady = status.ServerReady
                 },
                 connection = new
                 {
@@ -290,7 +291,9 @@ class Program
                     estimatedLocationSeconds = status.EstimatedLocationSeconds,
                     locationCount = status.LocationCount,
                     activeAreaLoaded = status.ActiveAreaLoaded,
-                    respawnWait = status.RespawnWait
+                    respawnWait = status.RespawnWait,
+                    dedicated = status.Dedicated,
+                    listening = status.Listening
                 },
                 diagnostics = new
                 {
@@ -323,7 +326,8 @@ class Program
             $"mainMenu={ToBool(status.MainMenuReady)} " +
             $"inWorld={ToBool(status.InWorldReady)} " +
             $"localPlayer={ToBool(status.LocalPlayerReady)} " +
-            $"serverConnected={ToBool(status.ServerConnected)}");
+            $"serverConnected={ToBool(status.ServerConnected)} " +
+            $"serverReady={ToBool(status.ServerReady)}");
         output.WriteLine(
             "context " +
             $"game={FormatState(status.IsRunning ? "running" : "not_running")} " +
@@ -342,7 +346,9 @@ class Program
                 $"estimatedLocationSeconds={status.EstimatedLocationSeconds.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)} " +
                 $"locationCount={status.LocationCount} " +
                 $"activeAreaLoaded={ToBool(status.ActiveAreaLoaded)} " +
-                $"respawnWait={status.RespawnWait.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}");
+                $"respawnWait={status.RespawnWait.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)} " +
+                $"dedicated={ToBool(status.Dedicated)} " +
+                $"listening={ToBool(status.Listening)}");
         }
         output.WriteLine($"diagnostic {diagnosticCode}: {status.DiagnosticMessage}");
         output.WriteLine($"next {NextStatusAction(status)}");
@@ -354,6 +360,16 @@ class Program
         if (status.ServerConnected)
         {
             return "Client is in-world and connected; run Valheim commands or validation steps.";
+        }
+
+        if (status.ServerReady)
+        {
+            return "Server world is up and listening; clients can join.";
+        }
+
+        if (status.Dedicated && status.IsConnected)
+        {
+            return "Dedicated server is not open for players yet (it generates a new world's locations, then listens); wait --for server-ready.";
         }
 
         if (status.InWorldReady)
@@ -732,6 +748,7 @@ class Program
         Console.WriteLine("                                           Launch and auto-join server");
         Console.WriteLine("  valheim-cli wait --for terminal --timeout 120s");
         Console.WriteLine("  valheim-cli wait --for in-world --timeout 10m --stall 3m");
+        Console.WriteLine("  valheim-cli wait --for server-ready --timeout 30m");
         Console.WriteLine("  valheim-cli join --server 127.0.0.1:2456 --password-file ./password.txt --character Test");
         Console.WriteLine("  valheim-cli commands --group cli --json");
         Console.WriteLine();

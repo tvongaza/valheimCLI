@@ -448,6 +448,8 @@ public class GameLauncher
                     LocationCount = GetIntDetail(statusDetails, "locationCount"),
                     ActiveAreaLoaded = GetBoolDetail(statusDetails, "activeAreaLoaded"),
                     RespawnWait = GetFloatDetail(statusDetails, "respawnWait"),
+                    Dedicated = GetBoolDetail(statusDetails, "dedicated"),
+                    Listening = GetBoolDetail(statusDetails, "listening"),
                     ConnectionStatus = connectionStatus,
                     ConnectedServer = server,
                     PluginLog = pluginLog
@@ -587,6 +589,12 @@ public class GameStatus
     public int LocationCount { get; set; }
     public bool ActiveAreaLoaded { get; set; }
     public float RespawnWait { get; set; }
+
+    /// <summary>The game is a dedicated server (no local player, ever); false from a plugin that does not report it.</summary>
+    public bool Dedicated { get; set; }
+
+    /// <summary>The game is a server with its network socket open for players; false from a plugin that does not report it.</summary>
+    public bool Listening { get; set; }
     public string ConnectionStatus { get; set; } = "";
     public string ConnectedServer { get; set; } = "";
     public bool WaitTimedOut { get; set; }
@@ -600,6 +608,13 @@ public class GameStatus
     public bool InWorldReady => State.Equals("InWorld", StringComparison.OrdinalIgnoreCase);
     public bool LocalPlayerReady => InWorldReady;
     public bool ServerConnected => InWorldReady && ConnectionStatus.Equals("Connected", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// A server's world is up for players: its locations exist, it listens, and it is not
+    /// shutting down. The same for a new world (after generating its locations) and an
+    /// existing one (straight after loading), unlike the log line written only when locations are generated.
+    /// </summary>
+    public bool ServerReady => IsConnected && LocationsGenerated && Listening && !ShuttingDown;
     public bool HasUnrecoverableConnectionFailure => ConnectionStatus.Contains("ErrorVersion", StringComparison.OrdinalIgnoreCase) ||
                                                      ConnectionStatus.Contains("ErrorPassword", StringComparison.OrdinalIgnoreCase);
     public string DiagnosticCode
@@ -671,6 +686,7 @@ public class GameStatus
             WaitTarget.InWorld => InWorldReady,
             WaitTarget.LocalPlayer => LocalPlayerReady,
             WaitTarget.ServerConnected => ServerConnected,
+            WaitTarget.ServerReady => ServerReady,
             _ => false
         };
     }

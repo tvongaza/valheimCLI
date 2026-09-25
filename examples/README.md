@@ -92,6 +92,21 @@ $ echo $?
 5
 ```
 
+A dedicated server never has a local player, so wait for `server-ready`
+there: it is reached whether the server generated a new world or loaded an
+existing one. `in-world` on a dedicated server ends at once:
+
+```text
+$ valheim-cli -p 5556 wait --for in-world --timeout 300s
+ERROR: code=unreachable waiting for in-world; state=InWorldNoPlayer; phase=opening_server; connectionStatus=Connected; this is a dedicated server, which never has a main menu, a local player or a server connection of its own (in-world); wait for server-ready
+...
+$ echo $?
+5
+$ valheim-cli -p 5556 wait --for server-ready --timeout 300s --progress 2s
+WAIT: 2s/300s for server-ready; state=InWorldNoPlayer phase=opening_server connection=Connected; unchanged for 2s
+OK: reached server-ready; state=InWorldNoPlayer; connectionStatus=Connected
+```
+
 A test plan's `waitFor` step prints the same heartbeat under the step, and
 a stalled or unreachable wait fails the step (`smoke-plan.yaml` started in a
 world stops at its first step with `code=unreachable`).

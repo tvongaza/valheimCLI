@@ -153,7 +153,10 @@ public enum WaitTarget
     MainMenu,
     InWorld,
     LocalPlayer,
-    ServerConnected
+    ServerConnected,
+
+    /// <summary>A server's world is up for players: locations exist and it listens (a dedicated server, or a host that opened its world).</summary>
+    ServerReady
 }
 
 public static class WaitTargets
@@ -170,9 +173,10 @@ public static class WaitTargets
             "inworld" or "world" => WaitTarget.InWorld,
             "localplayer" or "player" => WaitTarget.LocalPlayer,
             "serverconnected" or "connected" or "connection" => WaitTarget.ServerConnected,
+            "serverready" or "dedicated" or "dedicatedserver" => WaitTarget.ServerReady,
             _ => WaitTarget.Process
         };
-        return normalized is "process" or "game" or "plugin" or "pluginserver" or "server" or "terminal" or "cli" or "mainmenu" or "menu" or "inworld" or "world" or "localplayer" or "player" or "serverconnected" or "connected" or "connection";
+        return normalized is "process" or "game" or "plugin" or "pluginserver" or "server" or "terminal" or "cli" or "mainmenu" or "menu" or "inworld" or "world" or "localplayer" or "player" or "serverconnected" or "connected" or "connection" or "serverready" or "dedicated" or "dedicatedserver";
     }
 
     public static string ToName(WaitTarget target)
@@ -186,6 +190,7 @@ public static class WaitTargets
             WaitTarget.InWorld => "in-world",
             WaitTarget.LocalPlayer => "local-player",
             WaitTarget.ServerConnected => "server-connected",
+            WaitTarget.ServerReady => "server-ready",
             _ => "process"
         };
     }

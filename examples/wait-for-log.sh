@@ -22,7 +22,10 @@
 # and the latest of them, so a busy game and a silent one look different.
 # There is no stall detection here: a game in a world can log nothing for
 # minutes. To wait for a game state rather than a line, use
-# `valheim-cli wait --for ...`, which also fails early on a stall.
+# `valheim-cli wait --for ...`, which also fails early on a stall. A
+# dedicated server's world is up at `valheim-cli wait --for server-ready`;
+# do not key that to a log line: the generation line is written only when a
+# new world generates its locations, never when an existing world loads.
 #
 # Environment:
 #   VALHEIM_PATH  game folder that contains BepInEx (default: the Steam folder for this OS)

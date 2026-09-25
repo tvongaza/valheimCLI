@@ -97,14 +97,14 @@ valheim-cli cli_capture E-side 347.5 57.5 -522.5 331.1 51.5 -515.6  # pose, wait
 
 ```text
 valheim-cli status ok=false code=game_not_running
-readiness process=false plugin=false terminal=false mainMenu=false inWorld=false localPlayer=false serverConnected=false
+readiness process=false plugin=false terminal=false mainMenu=false inWorld=false localPlayer=false serverConnected=false serverReady=false
 context game=not_running state=Unknown cli=127.0.0.1:5555 connection=none server=none
 diagnostic game_not_running: Valheim process is not running.
 next Start Valheim with the desired profile, then rerun valheim-cli --status.
 path /path/to/Valheim
 ```
 
-The readiness line reports separate fields for the game process, plugin TCP server, terminal command bridge, main menu, in-world player, local player, and dedicated-server connection. Use `--json` for stable automation output.
+The readiness line reports separate fields for the game process, plugin TCP server, terminal command bridge, main menu, in-world player, local player, dedicated-server connection, and (on a server) whether its world is up for players. Use `--json` for stable automation output.
 
 Status diagnostics distinguish these connection failures when the facts are available:
 
@@ -137,6 +137,13 @@ The JSON launch response includes `phases`, `failurePhase`, `errorCode`, and the
 - `in-world`
 - `local-player`
 - `server-connected`
+- `server-ready`: a server's world is up for players (its locations exist, it listens for connections, it is not shutting down)
+
+**A dedicated server** has a world but never a local player: its state stays `InWorldNoPlayer`, so `in-world` never comes. Wait for `server-ready`. It is reached on every boot path: a new world after generating its locations (phase `generating_locations`, then `opening_server`), an existing world straight after loading, which writes no generation line to the log. A wait for `main-menu`, `in-world`, `local-player` or `server-connected` on a dedicated server ends at once as unreachable and names `server-ready`. A client hosting a world it opened to other players reaches `server-ready` too. The status reports `dedicated=` and `listening=`, and `--status` a `serverReady` readiness field; a plugin older than this one reports neither, so `server-ready` needs the plugin from this version on the server.
+
+```bash
+valheim-cli -p 5556 wait --for server-ready --timeout 30m   # a dedicated server through a tunnel
+```
 
 A wait watches the whole status (process, plugin, state, load phase, location progress, connection) and ends in one of five ways:
 
