@@ -971,6 +971,8 @@ namespace valheimCLI
 
         private void OnDestroy()
         {
+            try { CaptureCommands.RestoreAll(); }
+            catch (Exception ex) { Log.LogError($"Restoring clutter on unload failed: {ex}"); }
             _commandServer?.Dispose();
             Config.Save();
         }

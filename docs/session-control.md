@@ -58,7 +58,9 @@ that a queued attachment or ownership request has already completed.
 
 Use disposable worlds/characters for mutation tests and restore their files
 and plugin configuration after the session. Re-enable clutter before capture
-work ends if it was enabled at the start.
+work ends if it was enabled at the start. Clutter still turned off when the
+plugin unloads (the game closing, or the plugin being reloaded) is restored
+then.
 
 ## Place pieces from coordinates
 

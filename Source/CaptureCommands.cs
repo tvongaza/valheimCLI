@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 
@@ -8,6 +9,27 @@ namespace valheimCLI
         // Weak keys keep this temporary override from retaining a departed world.
         private static readonly ConditionalWeakTable<ClutterSystem, Dictionary<ClutterSystem.Clutter, bool>> Originals =
             new ConditionalWeakTable<ClutterSystem, Dictionary<ClutterSystem.Clutter, bool>>();
+        private static readonly List<WeakReference<ClutterSystem>> Owners = new List<WeakReference<ClutterSystem>>();
+
+        private static void Restore(ClutterSystem clutter)
+        {
+            if (!Originals.TryGetValue(clutter, out Dictionary<ClutterSystem.Clutter, bool> saved)) return;
+            foreach (var entry in saved) entry.Key.m_enabled = entry.Value;
+            Originals.Remove(clutter);
+            Owners.RemoveAll(owner => !owner.TryGetTarget(out var target) || ReferenceEquals(target, clutter));
+        }
+
+        /// <summary>Release temporary overrides before a replacement assembly loses the snapshots.</summary>
+        public static void RestoreAll()
+        {
+            foreach (var owner in Owners.ToArray())
+            {
+                if (!owner.TryGetTarget(out var clutter) || clutter == null) continue;
+                Restore(clutter);
+                clutter.ClearAll();
+            }
+            Owners.Clear();
+        }
 
         public static void Register()
         {
@@ -29,20 +51,21 @@ namespace valheimCLI
                 bool on = args[1] == "on";
                 if (!on)
                 {
-                    Dictionary<ClutterSystem.Clutter, bool> saved = Originals.GetOrCreateValue(clutter);
+                    if (!Originals.TryGetValue(clutter, out Dictionary<ClutterSystem.Clutter, bool> saved))
+                    {
+                        saved = Originals.GetOrCreateValue(clutter);
+                        Owners.RemoveAll(owner => !owner.TryGetTarget(out var target) || target == null);
+                        Owners.Add(new WeakReference<ClutterSystem>(clutter));
+                    }
                     foreach (ClutterSystem.Clutter entry in clutter.m_clutter)
                     {
                         if (!saved.ContainsKey(entry)) saved.Add(entry, entry.m_enabled);
                         entry.m_enabled = false;
                     }
                 }
-                else if (Originals.TryGetValue(clutter, out Dictionary<ClutterSystem.Clutter, bool> saved))
+                else
                 {
-                    foreach (ClutterSystem.Clutter entry in clutter.m_clutter)
-                    {
-                        if (saved.TryGetValue(entry, out bool enabled)) entry.m_enabled = enabled;
-                    }
-                    Originals.Remove(clutter);
+                    Restore(clutter);
                 }
 
                 clutter.ClearAll();

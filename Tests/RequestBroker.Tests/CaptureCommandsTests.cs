@@ -79,6 +79,25 @@ public class CaptureCommandsTests
     }
 
     [Fact]
+    public void UnloadRestoresEveryOwnedInstanceAndIsIdempotent()
+    {
+        CaptureCommands.RestoreAll();
+        ClutterSystem first = Start(true, false);
+        Run("off"); Run("off");
+        ClutterSystem second = Start(false, true);
+        Run("off");
+        CaptureCommands.RestoreAll();
+        Assert.Equal(new[] { true, false }, first.m_clutter.Select(x => x.m_enabled));
+        Assert.Equal(new[] { false, true }, second.m_clutter.Select(x => x.m_enabled));
+        int clears = second.ClearCalls;
+        CaptureCommands.RestoreAll();
+        Assert.Equal(clears, second.ClearCalls);
+        // A replacement command has no snapshot, and must leave the restored flags alone.
+        CaptureCommands.Register(); Run("on");
+        Assert.Equal(new[] { false, true }, second.m_clutter.Select(x => x.m_enabled));
+    }
+
+    [Fact]
     public void InvalidArgumentsAndMissingSystemDoNotReportSuccess()
     {
         ClutterSystem system = Start(true);
