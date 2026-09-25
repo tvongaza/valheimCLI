@@ -12,6 +12,7 @@
   <ItemGroup>
     <Compile Include="../../Source/RequestBroker.cs" Link="Source/RequestBroker.cs" />
     <Compile Include="../../Source/OperationGate.cs" Link="Source/OperationGate.cs" />
+    <Compile Include="../../Source/SaveOutcome.cs" Link="Source/SaveOutcome.cs" />
     <Compile Include="../../CLI/Testing/GameLauncher.cs" Link="CLI/GameLauncher.cs" />
     <Compile Include="../../CLI/Testing/ValheimClient.cs" Link="CLI/ValheimClient.cs" />
     <Compile Include="../../CLI/Testing/ConnectionDefaults.cs" Link="CLI/ConnectionDefaults.cs" />

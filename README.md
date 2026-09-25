@@ -89,7 +89,36 @@ valheim-cli cli_arrive 331 60 -516 64 30       # teleport, wait for landing + lo
 valheim-cli cli_clear_view 331 -516 45         # destroy clutter, recount next frame, repeat up to 3 passes
 valheim-cli cli_until 30 ready=true road_zone_state 331 -516 64   # poll any command until a line matches
 valheim-cli cli_capture E-side 347.5 57.5 -522.5 331.1 51.5 -515.6  # pose, wait for zones / heightmap rebuilds / weather, render 2 frames, save, wait for the file
+valheim-cli cli_save 120                       # save the world, answer when the save has completed
 ```
+
+`cli_save [timeout=120]` saves the world and the player profiles, as the
+`save` console command does, and answers only when the save has completed.
+Run it on the game that holds the world: a dedicated server, or a client
+hosting its world. It is not a cheat, so it works without `devcommands`.
+A world save runs on a thread and writes the files `_main.<n>.*` in the
+world's save folder; `n`, the save number, moves on only when every file
+was written. The answer:
+
+- `OK: SAVE ms=<ms> world=<name> saveNumber=<n> dir=<world save folder>`
+- `ERROR: code=save_failed ...`: the save ended without moving the save
+  number (the game log has `World save (5/5) FAILED` or `Error saving world`).
+- `ERROR: code=save_timeout ...`: still writing at the deadline; it finishes
+  on its own, and the next `cli_save` waits for it before saving again.
+- `ERROR: code=save_skipped reason=...`: the game would not start a save
+  (`session_flag`, `load_error`, `zone_system`, `dungeon_db`, `low_disk`);
+  nothing was written.
+- `ERROR: code=not_server` on a client of another server, `ERROR: code=no_world`
+  with no world loaded.
+
+A save that is already running (an autosave) is waited for first. Give the
+client a `--timeout` longer than the save's own, or the request times out
+first (`command_timeout`, while the save carries on). Prefer it to `save`
+followed by watching the log for its last line: a watcher that starts after
+the save has finished waits out its timeout. On a dedicated server the
+vanilla `save` can also throw a NullReferenceException within 60 s of the
+previous save (its too-frequent-save check reads a platform that a server
+does not have); `cli_save` does not go through that check.
 
 ## Readiness And Exit Codes
 
