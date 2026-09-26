@@ -160,6 +160,14 @@ public class WaitCondition
     [YamlMember(Alias = "event")]
     public string Event { get; set; } = "";
 
+    /// <summary>End the wait when nothing the game reports changes for this long ("0" never); empty uses --stall or the default.</summary>
+    [YamlMember(Alias = "stall")]
+    public string Stall { get; set; } = "";
+
+    /// <summary>Keep waiting in a state that needs an action, for a step where someone takes it.</summary>
+    [YamlMember(Alias = "allowUnreachable")]
+    public bool AllowUnreachable { get; set; } = false;
+
     public TimeSpan GetTimeoutSpan()
     {
         return TestSettings.ParseDuration(Timeout);

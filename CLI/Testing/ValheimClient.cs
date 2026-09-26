@@ -48,8 +48,12 @@ public class ValheimClient : IDisposable
             _reader = new StreamReader(_stream, ConnectionDefaults.Utf8NoBom);
             _writer = new StreamWriter(_stream, ConnectionDefaults.Utf8NoBom) { AutoFlush = true };
 
-            // Wait for ready message
+            // Wait for ready message. The plugin's socket thread greets at once whatever
+            // the game is doing; a tunnel whose far end is gone may accept and then say
+            // nothing, so the greeting has a deadline instead of blocking a wait forever.
+            _stream.ReadTimeout = (int)GreetingTimeout.TotalMilliseconds;
             string? ready = _reader.ReadLine();
+            _stream.ReadTimeout = Timeout.Infinite;
             if (ready != "VALHEIM_CLI_READY")
             {
                 Disconnect();
@@ -82,7 +86,16 @@ public class ValheimClient : IDisposable
         {
             return false;
         }
+        catch (IOException)
+        {
+            // No greeting in time, or the connection closed during it.
+            Disconnect();
+            return false;
+        }
     }
+
+    /// <summary>How long Connect waits for the plugin's greeting.</summary>
+    public static readonly TimeSpan GreetingTimeout = TimeSpan.FromSeconds(5);
 
     public void Disconnect()
     {
@@ -136,8 +149,16 @@ public class ValheimClient : IDisposable
         return "Unknown";
     }
 
+    /// <summary>
+    /// The last GetStatusDetails read the plugin's STATUS line. False when it fell back to the
+    /// state alone (no STATUS line in time, or a plugin without one): then a field missing from
+    /// the details says nothing about what the plugin reports.
+    /// </summary>
+    public bool StatusLineRead { get; private set; }
+
     public Dictionary<string, string> GetStatusDetails()
     {
+        StatusLineRead = false;
         EnsureConnected();
 
         _writer!.WriteLine("STATUS");
@@ -173,10 +194,11 @@ public class ValheimClient : IDisposable
             };
         }
 
+        StatusLineRead = true;
         return ParseKeyValueStatus(response.Substring("STATUS:".Length));
     }
 
-    private static Dictionary<string, string> ParseKeyValueStatus(string payload)
+    internal static Dictionary<string, string> ParseKeyValueStatus(string payload)
     {
         Dictionary<string, string> result = new(StringComparer.OrdinalIgnoreCase);
         string[] parts = payload.Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -223,7 +245,21 @@ public class ValheimClient : IDisposable
     /// <summary>Extra time the client allows for the server's own timeout response before giving up on the socket.</summary>
     public static readonly TimeSpan ResponseAllowance = TimeSpan.FromSeconds(5);
 
+    /// <summary>
+    /// Resend a command up to this many times when the game answers that it expired in the
+    /// queue and never ran (--retry-unstarted); 0 sends once. A command that started is never resent.
+    /// </summary>
+    public int RetryUnstarted { get; set; }
+
+    /// <summary>Gets one heartbeat line per resend.</summary>
+    public Action<string>? OnRetry { get; set; }
+
     public List<string> SendCommand(string command)
+    {
+        return CommandRetry.Send(() => SendOnce(command), RetryUnstarted, OnRetry);
+    }
+
+    private List<string> SendOnce(string command)
     {
         EnsureConnected();
 
@@ -331,7 +367,77 @@ public class ValheimClient : IDisposable
 
     public CommandResult ExecuteCommand(string command)
     {
-        return CommandResult.FromOutput(command, SendCommand(command));
+        List<string> output = SendCommand(command);
+        return SilentReply.Judge(command, output, TryListCommandNames, $"{_host}:{_port}")
+               ?? CommandResult.FromOutput(command, output);
+    }
+
+    /// <summary>How long TryListCommandNames waits for the plugin's command list.</summary>
+    public static readonly TimeSpan ListTimeout = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// The console command names the plugin has registered (LIST_COMMANDS, which every plugin build
+    /// answers on its socket thread), or null when it did not list any in time. A list that did not
+    /// arrive whole leaves the connection out of step, so it is closed.
+    /// </summary>
+    public IReadOnlyCollection<string>? TryListCommandNames()
+    {
+        if (_stream == null || _writer == null || _reader == null)
+        {
+            return null;
+        }
+
+        int previous = Timeout.Infinite;
+        try
+        {
+            previous = _stream.ReadTimeout;
+            _stream.ReadTimeout = (int)ListTimeout.TotalMilliseconds;
+            _writer.WriteLine("LIST_COMMANDS");
+            string? header = _reader.ReadLine();
+            while (TryHandleStateChange(header))
+            {
+                header = _reader.ReadLine();
+            }
+
+            if (header == null || !header.StartsWith("COMMANDS:") || !int.TryParse(header.Substring(9), out int count))
+            {
+                Disconnect();
+                return null;
+            }
+
+            HashSet<string> names = new(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < count; i++)
+            {
+                string? line = _reader.ReadLine();
+                if (line == null)
+                {
+                    Disconnect();
+                    return null;
+                }
+
+                int bar = line.IndexOf('|');
+                names.Add(bar < 0 ? line : line[..bar]);
+            }
+
+            _reader.ReadLine(); // END_COMMANDS
+            return names.Count > 0 ? names : null;
+        }
+        catch (Exception ex) when (ex is IOException || ex is ObjectDisposedException || ex is InvalidOperationException)
+        {
+            Disconnect();
+            return null;
+        }
+        finally
+        {
+            try
+            {
+                if (_stream != null)
+                    _stream.ReadTimeout = previous;
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
     }
 
     public bool TryGetConnectionStatus(out string connectionStatus, out string server)

@@ -11,7 +11,13 @@ public enum CliExitCode
     ConnectionFailure = 3,
     BadInput = 4,
     GameNotReady = 5,
-    ExpectationMismatch = 6
+    ExpectationMismatch = 6,
+
+    /// <summary>
+    /// The game exited, or its plugin stopped answering, during a wait. 7, not 6: an
+    /// expectation mismatch (a game that is not the one a test expects) is being given 6.
+    /// </summary>
+    GameLost = 7
 }
 
 public sealed class CliResponse
@@ -95,7 +101,9 @@ public sealed class CommandResult
                 return "bad_input";
             }
 
-            if (lower.Contains("not a recognized command"))
+            // A client's console says "'x' is not a recognized command"; a dedicated server's says
+            // "Unknown command 'x'. Type 'help' ...". Both are a command the game does not have.
+            if (lower.Contains("not a recognized command") || lower.StartsWith("unknown command '"))
             {
                 return "unknown_command";
             }
@@ -145,6 +153,9 @@ public sealed class PluginLogInfo
     public bool Exists { get; set; }
     public bool PluginLoaded { get; set; }
     public int? Port { get; set; }
+
+    /// <summary>Log size in bytes when it was read; a growing log is a starting game's only sign of progress.</summary>
+    public long Length { get; set; }
 }
 
 public static class JsonOutput
@@ -157,9 +168,26 @@ public static class JsonOutput
         Converters = { new JsonStringEnumConverter() }
     };
 
+    private static readonly JsonSerializerOptions EventOptions = new()
+    {
+        WriteIndented = false,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Converters = { new JsonStringEnumConverter() }
+    };
+
     public static void Write(object value)
     {
         Console.WriteLine(JsonSerializer.Serialize(value, Options));
+    }
+
+    /// <summary>
+    /// One event as a single line on stderr, so stdout keeps exactly one JSON document
+    /// (the final result) while a long operation still reports as it goes.
+    /// </summary>
+    public static void WriteEvent(object value)
+    {
+        Console.Error.WriteLine(JsonSerializer.Serialize(value, EventOptions));
     }
 }
 
@@ -171,7 +199,10 @@ public enum WaitTarget
     MainMenu,
     InWorld,
     LocalPlayer,
-    ServerConnected
+    ServerConnected,
+
+    /// <summary>A server's world is up for players: locations exist and it listens (a dedicated server, or a host that opened its world).</summary>
+    ServerReady
 }
 
 public static class WaitTargets
@@ -188,9 +219,10 @@ public static class WaitTargets
             "inworld" or "world" => WaitTarget.InWorld,
             "localplayer" or "player" => WaitTarget.LocalPlayer,
             "serverconnected" or "connected" or "connection" => WaitTarget.ServerConnected,
+            "serverready" or "dedicated" or "dedicatedserver" => WaitTarget.ServerReady,
             _ => WaitTarget.Process
         };
-        return normalized is "process" or "game" or "plugin" or "pluginserver" or "server" or "terminal" or "cli" or "mainmenu" or "menu" or "inworld" or "world" or "localplayer" or "player" or "serverconnected" or "connected" or "connection";
+        return normalized is "process" or "game" or "plugin" or "pluginserver" or "server" or "terminal" or "cli" or "mainmenu" or "menu" or "inworld" or "world" or "localplayer" or "player" or "serverconnected" or "connected" or "connection" or "serverready" or "dedicated" or "dedicatedserver";
     }
 
     public static string ToName(WaitTarget target)
@@ -204,6 +236,7 @@ public static class WaitTargets
             WaitTarget.InWorld => "in-world",
             WaitTarget.LocalPlayer => "local-player",
             WaitTarget.ServerConnected => "server-connected",
+            WaitTarget.ServerReady => "server-ready",
             _ => "process"
         };
     }

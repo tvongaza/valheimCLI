@@ -19,6 +19,12 @@ class Program
     private static bool _json = false;
     private static TimeSpan _timeout = TimeSpan.FromSeconds(120);
     private static TimeSpan _interval = TimeSpan.FromSeconds(2);
+    private static TimeSpan _progress = WaitPolicy.DefaultProgress;
+    private static TimeSpan? _stall = null;
+    private static bool _allowUnreachable = false;
+    private static bool _remote = false;
+    private static int _retryUnstarted = 0;
+    private static string? _argumentError = null;
     private static string? _artifactsDir = null;
     private static Dictionary<string, string> _variables = new();
     private static string? _expectFile = null;
@@ -26,7 +32,9 @@ class Program
 
     static int Main(string[] args)
     {
-        if (args.Length > 0 && args[0] == "--help")
+        // --help anywhere: after -p PORT it used to fall through to the interactive prompt, which
+        // waits on stdin; run from a script whose stdin stays open, that is a wait with no end.
+        if (Array.IndexOf(args, "--help") >= 0)
         {
             PrintHelp();
             return 0;
@@ -109,6 +117,46 @@ class Program
                 _expectStrict = args[i] == "--expect-strict";
                 i++;
             }
+            else if (args[i] == "--progress" && i + 1 < args.Length)
+            {
+                if (WaitDurations.TryParse(args[i + 1], out TimeSpan progress))
+                {
+                    _progress = progress;
+                }
+                else
+                {
+                    _argumentError = $"invalid --progress duration '{args[i + 1]}' (use e.g. 15s, 1m or 0 to disable)";
+                }
+                i++;
+            }
+            else if (args[i] == "--stall" && i + 1 < args.Length)
+            {
+                if (WaitDurations.TryParse(args[i + 1], out TimeSpan stall))
+                {
+                    _stall = stall;
+                }
+                else
+                {
+                    _argumentError = $"invalid --stall duration '{args[i + 1]}' (use e.g. 90s, 2m or 0 to disable)";
+                }
+                i++;
+            }
+            else if (args[i] == "--allow-unreachable")
+            {
+                _allowUnreachable = true;
+            }
+            else if (args[i] == "--remote")
+            {
+                _remote = true;
+            }
+            else if (args[i] == "--retry-unstarted" && i + 1 < args.Length)
+            {
+                if (!int.TryParse(args[i + 1], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out _retryUnstarted))
+                {
+                    _argumentError = $"invalid --retry-unstarted count '{args[i + 1]}' (use a whole number, 0 to never resend)";
+                }
+                i++;
+            }
             else if (args[i] == "--var" && i + 1 < args.Length)
             {
                 string varArg = args[i + 1];
@@ -121,6 +169,16 @@ class Program
                 }
                 i++; // Skip next arg
             }
+        }
+
+        if (_argumentError == null && _remote && (_launch || _stopAfter))
+        {
+            _argumentError = "--launch and --stop-after act on this machine's game; with --remote, start and stop the game on its own machine";
+        }
+
+        if (_argumentError != null)
+        {
+            return PrintBadInput(_argumentError);
         }
 
         // Status mode - check game status
@@ -142,12 +200,13 @@ class Program
         {
             if (inCommand)
             {
-                if (args[i] == "--json")
+                if (args[i] == "--json" || args[i] == "--allow-unreachable" || args[i] == "--remote")
                 {
                     continue;
                 }
 
-                if (args[i] == "--timeout" || args[i] == "--interval" || args[i] == "--artifacts")
+                if (args[i] == "--timeout" || args[i] == "--interval" || args[i] == "--artifacts" ||
+                    args[i] == "--progress" || args[i] == "--stall" || args[i] == "--retry-unstarted")
                 {
                     i++;
                     continue;
@@ -164,14 +223,17 @@ class Program
                 args[i] == "--connect" || args[i] == "--password" ||
                 args[i] == "--password-file" || args[i] == "--timeout" ||
                 args[i] == "--interval" || args[i] == "--artifacts" ||
-                args[i] == "--expect" || args[i] == "--expect-strict")
+                args[i] == "--expect" || args[i] == "--expect-strict" ||
+                args[i] == "--progress" || args[i] == "--stall" ||
+                args[i] == "--retry-unstarted")
             {
                 i++; // Skip the value too
                 continue;
             }
             // Boolean flags
             if (args[i] == "-v" || args[i] == "--verbose" || args[i] == "--launch" || args[i] == "-l" ||
-                args[i] == "--stop-after" || args[i] == "--status" || args[i] == "--json")
+                args[i] == "--stop-after" || args[i] == "--status" || args[i] == "--json" ||
+                args[i] == "--allow-unreachable" || args[i] == "--remote")
             {
                 continue;
             }
@@ -240,7 +302,7 @@ class Program
 
     static int ShowStatus()
     {
-        GameLauncher launcher = new GameLauncher(_gamePath, _host, _port, _connect, _password);
+        GameLauncher launcher = new GameLauncher(_gamePath, _host, _port, _connect, _password, _remote);
         GameStatus status = launcher.GetStatus();
 
         if (_json)
@@ -253,6 +315,7 @@ class Program
                 message = status.IsConnected ? "Connected to CLI server." : "CLI server is not connected.",
                 errorCode = status.IsConnected ? "" : status.DiagnosticCode,
                 gamePath = status.GamePath,
+                remote = status.Remote,
                 host = status.Host,
                 port = status.Port,
                 readiness = new
@@ -263,7 +326,10 @@ class Program
                     mainMenu = status.MainMenuReady,
                     inWorld = status.InWorldReady,
                     localPlayer = status.LocalPlayerReady,
-                    serverConnected = status.ServerConnected
+                    serverConnected = status.ServerConnected,
+                    serverReady = status.ServerReady,
+                    // False when the plugin does not report a field server-ready needs (load.missingFields).
+                    serverReadyKnown = WaitStatusFields.Missing(WaitTarget.ServerReady, status).Count == 0
                 },
                 connection = new
                 {
@@ -273,12 +339,16 @@ class Program
                 load = new
                 {
                     phase = status.LoadPhase,
+                    shuttingDown = status.ShuttingDown,
                     locationsGenerated = status.LocationsGenerated,
                     locationProgress = status.LocationProgress,
                     estimatedLocationSeconds = status.EstimatedLocationSeconds,
                     locationCount = status.LocationCount,
                     activeAreaLoaded = status.ActiveAreaLoaded,
-                    respawnWait = status.RespawnWait
+                    respawnWait = status.RespawnWait,
+                    dedicated = status.Dedicated,
+                    listening = status.Listening,
+                    missingFields = MissingStatusFields(status)
                 },
                 diagnostics = new
                 {
@@ -295,14 +365,16 @@ class Program
         return status.IsConnected ? 0 : 1;
     }
 
-    static void WriteCompactStatus(GameStatus status)
+    static void WriteCompactStatus(GameStatus status, TextWriter? writer = null)
     {
+        TextWriter output = writer ?? Console.Out;
         string diagnosticCode = status.IsConnected ? "ready" : status.DiagnosticCode;
         string connectionStatus = string.IsNullOrWhiteSpace(status.ConnectionStatus) ? "none" : status.ConnectionStatus;
         string connectedServer = string.IsNullOrWhiteSpace(status.ConnectedServer) ? "none" : status.ConnectedServer;
 
-        Console.WriteLine($"valheim-cli status ok={ToBool(status.IsConnected)} code={diagnosticCode}");
-        Console.WriteLine(
+        List<string> serverReadyMissing = WaitStatusFields.Missing(WaitTarget.ServerReady, status);
+        output.WriteLine($"valheim-cli status ok={ToBool(status.IsConnected)} code={diagnosticCode}");
+        output.WriteLine(
             "readiness " +
             $"process={ToBool(status.ProcessReady)} " +
             $"plugin={ToBool(status.PluginServerReady)} " +
@@ -310,10 +382,17 @@ class Program
             $"mainMenu={ToBool(status.MainMenuReady)} " +
             $"inWorld={ToBool(status.InWorldReady)} " +
             $"localPlayer={ToBool(status.LocalPlayerReady)} " +
-            $"serverConnected={ToBool(status.ServerConnected)}");
-        Console.WriteLine(
+            $"serverConnected={ToBool(status.ServerConnected)} " +
+            $"serverReady={(serverReadyMissing.Count > 0 ? "unknown" : ToBool(status.ServerReady))}");
+        if (serverReadyMissing.Count > 0)
+        {
+            output.WriteLine($"note serverReady unknown (plugin does not report {string.Join(", ", serverReadyMissing)}): the plugin build is older than this client; update the plugin");
+        }
+        output.WriteLine(
             "context " +
             $"game={FormatState(status.IsRunning ? "running" : "not_running")} " +
+            $"local_process={ToBool(status.ProcessSeenLocally)} " +
+            $"remote={ToBool(status.Remote)} " +
             $"state={FormatState(status.State)} " +
             $"phase={FormatState(status.LoadPhase)} " +
             $"cli={status.Host}:{status.Port} " +
@@ -321,18 +400,33 @@ class Program
             $"server={FormatState(connectedServer)}");
         if (!string.IsNullOrWhiteSpace(status.LoadPhase))
         {
-            Console.WriteLine(
+            output.WriteLine(
                 "load " +
-                $"locationsGenerated={ToBool(status.LocationsGenerated)} " +
+                $"locationsGenerated={Reported(status, "locationsGenerated", status.LocationsGenerated)} " +
                 $"locationProgress={status.LocationProgress.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)} " +
                 $"estimatedLocationSeconds={status.EstimatedLocationSeconds.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)} " +
                 $"locationCount={status.LocationCount} " +
-                $"activeAreaLoaded={ToBool(status.ActiveAreaLoaded)} " +
-                $"respawnWait={status.RespawnWait.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}");
+                $"activeAreaLoaded={Reported(status, "activeAreaLoaded", status.ActiveAreaLoaded)} " +
+                $"respawnWait={status.RespawnWait.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)} " +
+                $"dedicated={Reported(status, "dedicated", status.Dedicated)} " +
+                $"listening={Reported(status, "listening", status.Listening)}");
         }
-        Console.WriteLine($"diagnostic {diagnosticCode}: {status.DiagnosticMessage}");
-        Console.WriteLine($"next {NextStatusAction(status)}");
-        Console.WriteLine($"path {status.GamePath}");
+        output.WriteLine($"diagnostic {diagnosticCode}: {status.DiagnosticMessage}");
+        output.WriteLine($"next {NextStatusAction(status)}");
+        output.WriteLine(status.Remote ? "path (remote: this machine's game folder is not read)" : $"path {status.GamePath}");
+    }
+
+    /// <summary>A boolean status field, or "unknown" when the plugin's status line does not carry it.</summary>
+    static string Reported(GameStatus status, string field, bool value)
+    {
+        return status.MissingFields(new[] { field }).Count > 0 ? "unknown" : ToBool(value);
+    }
+
+    /// <summary>The fields --status shows that the plugin's status line does not carry; null (left out) when none.</summary>
+    static List<string>? MissingStatusFields(GameStatus status)
+    {
+        List<string> missing = status.MissingFields(new[] { "shuttingDown", "locationsGenerated", "activeAreaLoaded", "dedicated", "listening" });
+        return missing.Count > 0 ? missing : null;
     }
 
     static string NextStatusAction(GameStatus status)
@@ -340,6 +434,22 @@ class Program
         if (status.ServerConnected)
         {
             return "Client is in-world and connected; run Valheim commands or validation steps.";
+        }
+
+        List<string> serverReadyMissing = WaitStatusFields.Missing(WaitTarget.ServerReady, status);
+        if (serverReadyMissing.Count > 0 && status.State.Equals("InWorldNoPlayer", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"This plugin build does not report {string.Join(", ", serverReadyMissing)}, so whether the server is open for players is unknown; update the valheimCLI plugin to wait --for server-ready.";
+        }
+
+        if (status.ServerReady)
+        {
+            return "Server world is up and listening; clients can join.";
+        }
+
+        if (status.Dedicated && status.IsConnected)
+        {
+            return "Dedicated server is not open for players yet (it generates a new world's locations, then listens); wait --for server-ready.";
         }
 
         if (status.InWorldReady)
@@ -374,6 +484,8 @@ class Program
 
         switch (status.DiagnosticCode)
         {
+            case "remote_not_answering":
+                return "Check the tunnel, that the game started on its machine, and that its BepInEx log there shows valheimCLI loaded.";
             case "game_not_running":
                 return "Start Valheim with the desired profile, then rerun valheim-cli --status.";
             case "wrong_port":
@@ -434,7 +546,7 @@ class Program
         Console.WriteLine("=======================");
 
         // Create game launcher
-        GameLauncher launcher = new GameLauncher(_gamePath, _host, _port, _connect, _password);
+        GameLauncher launcher = new GameLauncher(_gamePath, _host, _port, _connect, _password, _remote);
 
         // Create runner with options (CLI flags will override YAML settings)
         TestRunnerOptions options = new TestRunnerOptions
@@ -446,7 +558,12 @@ class Program
             ArtifactsDirectory = _artifactsDir,
             Json = _json,
             ExpectFile = _expectFile,
-            ExpectStrict = _expectStrict
+            ExpectStrict = _expectStrict,
+            Interval = _interval,
+            Progress = _progress,
+            Stall = _stall,
+            AllowUnreachable = _allowUnreachable,
+            RetryUnstarted = _retryUnstarted
         };
 
         TestRunner runner = new TestRunner(launcher, options, _host, _port);
@@ -491,7 +608,7 @@ class Program
 
     static async Task<int> RunLaunchMode()
     {
-        GameLauncher launcher = new GameLauncher(_gamePath, _host, _port, _connect, ReadPassword());
+        GameLauncher launcher = new GameLauncher(_gamePath, _host, _port, _connect, ReadPassword(), _remote);
         List<LaunchPhase> phases = new();
 
         if (!launcher.IsGameRunning())
@@ -520,7 +637,7 @@ class Program
             });
         }
 
-        GameStatus processStatus = await launcher.WaitForTargetAsync(WaitTarget.Process, _timeout, _interval);
+        GameStatus processStatus = await launcher.WaitForTargetAsync(WaitTarget.Process, _timeout, _interval, progress: _progress, onHeartbeat: WriteHeartbeat);
         phases.Add(new LaunchPhase
         {
             Name = "process-ready",
@@ -541,7 +658,7 @@ class Program
             Message = steamRunning ? "Steam process observed." : "Steam process was not observed; continuing because Valheim is running."
         });
 
-        GameStatus pluginStatus = await launcher.WaitForTargetAsync(WaitTarget.PluginServer, _timeout, _interval);
+        GameStatus pluginStatus = await launcher.WaitForTargetAsync(WaitTarget.PluginServer, _timeout, _interval, progress: _progress, onHeartbeat: WriteHeartbeat);
         bool pluginLoaded = pluginStatus.PluginLog.PluginLoaded || pluginStatus.PluginServerReady;
         phases.Add(new LaunchPhase
         {
@@ -567,7 +684,7 @@ class Program
             return FinishLaunch(phases, pluginStatus, "cli-server-listening", errorCode, "CLI server did not become reachable.");
         }
 
-        GameStatus terminalStatus = await launcher.WaitForTargetAsync(WaitTarget.Terminal, _timeout, _interval);
+        GameStatus terminalStatus = await launcher.WaitForTargetAsync(WaitTarget.Terminal, _timeout, _interval, progress: _progress, onHeartbeat: WriteHeartbeat);
         phases.Add(new LaunchPhase
         {
             Name = "terminal-ready",
@@ -625,8 +742,8 @@ class Program
             }
 
             WriteHumanPhase("Waiting for InWorld...");
-            bool inWorld = await client.WaitForStateAsync("InWorld", _timeout, interval: _interval);
-            GameStatus finalStatus = launcher.GetStatus();
+            GameStatus finalStatus = await launcher.WaitForTargetAsync(WaitTarget.InWorld, _timeout, _interval, progress: _progress, onHeartbeat: WriteHeartbeat);
+            bool inWorld = finalStatus.InWorldReady;
             phases.Add(new LaunchPhase
             {
                 Name = "in-world",
@@ -706,6 +823,11 @@ class Program
         Console.WriteLine("  --json                Print machine-readable JSON for supported commands");
         Console.WriteLine("  --timeout <duration>  Timeout for wait/join operations and for a command to complete in-game (default 120s), e.g. 120s or 3m");
         Console.WriteLine("  --interval <duration> Poll interval for wait/join operations");
+        Console.WriteLine("  --progress <duration> Print a wait heartbeat this often, to stderr (default 15s; 0 disables)");
+        Console.WriteLine("  --stall <duration>    End a wait when nothing the game reports changes for this long (default 120s; 0 disables)");
+        Console.WriteLine("  --allow-unreachable   Keep waiting in a state that needs an action (e.g. main menu while in a world)");
+        Console.WriteLine("  --remote              The game is on another machine (through a tunnel): read no local process or log; never launch or stop");
+        Console.WriteLine("  --retry-unstarted <n> Resend a command up to n times when the game expired it unrun behind a busy main thread (default 0)");
         Console.WriteLine("  --artifacts <dir>     Test-run artifact directory");
         Console.WriteLine("  --var <key=value>     Set a test variable (can be used multiple times)");
         Console.WriteLine("  --expect <file>       Check the game against an expectations file first (with --test, before the first step); exit 6 on a mismatch");
@@ -727,6 +849,9 @@ class Program
         Console.WriteLine("  valheim-cli --launch --connect 178.156.172.16:2457 --password mypass");
         Console.WriteLine("                                           Launch and auto-join server");
         Console.WriteLine("  valheim-cli wait --for terminal --timeout 120s");
+        Console.WriteLine("  valheim-cli wait --for in-world --timeout 10m --stall 3m");
+        Console.WriteLine("  valheim-cli wait --for server-ready --timeout 30m");
+        Console.WriteLine("  valheim-cli -p 5556 --remote wait --for server-ready --timeout 30m");
         Console.WriteLine("  valheim-cli join --server 127.0.0.1:2456 --password-file ./password.txt --character Test");
         Console.WriteLine("  valheim-cli join --server 127.0.0.1:2456 --character NewTest --create-character --skip-intro");
         Console.WriteLine("                                           Create a character that lands without the valkyrie intro");
@@ -756,7 +881,12 @@ class Program
     {
         try
         {
-            using ValheimClient client = new ValheimClient(_host, _port) { CommandTimeout = _timeout };
+            using ValheimClient client = new ValheimClient(_host, _port)
+            {
+                CommandTimeout = _timeout,
+                RetryUnstarted = _retryUnstarted,
+                OnRetry = line => Console.Error.WriteLine(line)
+            };
             if (!client.Connect())
             {
                 Console.Error.WriteLine($"Cannot connect to Valheim at {_host}:{_port}");
@@ -925,10 +1055,20 @@ class Program
             return PrintBadInput($"Unknown wait target: {targetRaw}");
         }
 
-        GameLauncher launcher = new GameLauncher(_gamePath, _host, _port, _connect, ReadPassword());
-        GameStatus status = await launcher.WaitForTargetAsync(target, _timeout, _interval);
-        bool ok = status.Satisfies(target);
+        WaitPolicy policy = new WaitPolicy
+        {
+            Timeout = _timeout,
+            Progress = _progress,
+            Stall = _stall ?? WaitPolicy.DefaultStall,
+            AllowUnreachable = _allowUnreachable
+        };
+        GameLauncher launcher = new GameLauncher(_gamePath, _host, _port, _connect, ReadPassword(), _remote);
+        WaitResult result = await launcher.WaitAsync(target, policy, _interval, WriteHeartbeat);
+        GameStatus status = result.Status;
+        bool ok = result.Outcome == WaitOutcome.Reached;
         string targetName = WaitTargets.ToName(target);
+        string errorCode = result.ErrorCode;
+        int exitCode = (int)WaitTracker.ExitCode(result.Outcome);
 
         if (_json)
         {
@@ -937,19 +1077,67 @@ class Program
                 ok,
                 command = "wait",
                 state = status.State,
-                message = ok ? $"Reached {targetName}." : $"Timed out waiting for {targetName}.",
-                errorCode = ok ? "" : "timeout",
+                message = WaitMessage(result.Outcome, targetName, result.Reason),
+                errorCode,
                 target = targetName,
                 timeoutSeconds = _timeout.TotalSeconds,
+                stallSeconds = policy.Stall.TotalSeconds,
+                progressSeconds = policy.Progress.TotalSeconds,
+                elapsedSeconds = Math.Round(result.Elapsed.TotalSeconds, 1),
+                unchangedSeconds = Math.Round(result.Unchanged.TotalSeconds, 1),
+                heartbeats = result.Heartbeats,
                 status
             });
-            return ok ? 0 : (int)CliExitCode.Timeout;
+            return exitCode;
         }
 
-        Console.WriteLine(ok
-            ? $"OK: reached {targetName}; state={status.State}; connectionStatus={status.ConnectionStatus}"
-            : $"TIMEOUT: waiting for {targetName}; state={status.State}; diagnostic={status.DiagnosticCode}");
-        return ok ? 0 : (int)CliExitCode.Timeout;
+        string context = $"state={FormatState(status.State)}; phase={FormatState(status.LoadPhase)}; connectionStatus={FormatState(status.ConnectionStatus)}";
+        switch (result.Outcome)
+        {
+            case WaitOutcome.Reached:
+                Console.WriteLine($"OK: reached {targetName}; state={status.State}; connectionStatus={status.ConnectionStatus}");
+                return exitCode;
+            case WaitOutcome.TimedOut:
+                Console.WriteLine($"TIMEOUT: waiting for {targetName}; state={status.State}; diagnostic={status.DiagnosticCode}");
+                break;
+            default:
+                Console.WriteLine($"ERROR: code={errorCode} waiting for {targetName}; {context}; {result.Reason}");
+                break;
+        }
+
+        // The last status, for the reader who has to decide what to do next.
+        Console.Error.WriteLine("last status:");
+        WriteCompactStatus(status, Console.Error);
+
+        return exitCode;
+    }
+
+    private static string WaitMessage(WaitOutcome outcome, string targetName, string reason)
+    {
+        return outcome switch
+        {
+            WaitOutcome.Reached => $"Reached {targetName}.",
+            WaitOutcome.Stalled => $"Stalled waiting for {targetName}: {reason}.",
+            WaitOutcome.Unreachable => $"Cannot reach {targetName}: {reason}.",
+            WaitOutcome.Lost => $"Lost the game waiting for {targetName}: {reason}.",
+            WaitOutcome.Unsupported => $"Cannot judge {targetName}: {reason}.",
+            _ => $"Timed out waiting for {targetName}."
+        };
+    }
+
+    /// <summary>
+    /// A heartbeat goes to stderr, so stdout keeps only the result: a line in human
+    /// mode, a single-line JSON event with --json.
+    /// </summary>
+    private static void WriteHeartbeat(WaitHeartbeat beat)
+    {
+        if (_json)
+        {
+            JsonOutput.WriteEvent(beat);
+            return;
+        }
+
+        Console.Error.WriteLine(beat.ToLine());
     }
 
     static async Task<int> RunJoinCommand(List<string> args)
@@ -967,8 +1155,8 @@ class Program
         {
             return PrintBadInput("join --skip-intro applies to a character it creates (--create-character); for an existing one run cli_skip_intro after joining");
         }
-        GameLauncher launcher = new GameLauncher(_gamePath, _host, _port, _connect, ReadPassword());
-        JoinResult result = await launcher.JoinDirectAsync(server, ReadPassword(), character, createCharacter, _timeout, _interval, skipIntro: skipIntro);
+        GameLauncher launcher = new GameLauncher(_gamePath, _host, _port, _connect, ReadPassword(), _remote);
+        JoinResult result = await launcher.JoinDirectAsync(server, ReadPassword(), character, createCharacter, _timeout, _interval, skipIntro: skipIntro, progress: _progress, onHeartbeat: WriteHeartbeat);
 
         if (_json)
         {
@@ -1238,7 +1426,12 @@ class Program
                 if (client == null || !client.IsConnected)
                 {
                     client?.Dispose();
-                    client = new ValheimClient(_host, _port) { CommandTimeout = _timeout };
+                    client = new ValheimClient(_host, _port)
+                    {
+                        CommandTimeout = _timeout,
+                        RetryUnstarted = _retryUnstarted,
+                        OnRetry = line => Console.Error.WriteLine(line)
+                    };
                     if (!client.Connect())
                     {
                         Console.WriteLine("Failed to connect. Is Valheim running with the mod?");

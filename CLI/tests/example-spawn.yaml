@@ -29,6 +29,7 @@ tests:
     waitFor:
       state: InWorld
       timeout: 120s
+      stall: 0   # a person loads the world; nothing changes while they pick a character
       message: Please load into a world to begin testing
 
   - name: Enable Dev Commands

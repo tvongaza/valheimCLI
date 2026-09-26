@@ -1,0 +1,84 @@
+# A smoke test for any mod: does the game still reach a playable world with the
+# mod installed, and does the mod answer?
+#
+#   valheim-cli --test examples/smoke-plan.yaml --launch
+#   examples/dev-loop.sh MyMod.csproj examples/smoke-plan.yaml
+#
+# It makes a throwaway local character and world (the names below), so it never
+# touches your real saves. Replace the "Your mod answers" step with one of your
+# own console commands and the text it prints; everything else is generic.
+# Override any variable from the command line: --var world=OtherWorld
+
+name: Mod smoke test
+description: Reach a fresh local world with the mod loaded, check the player and one of the mod's commands, take a screenshot.
+
+game:
+  launch: false          # --launch starts Valheim first
+  launchTimeout: 300s
+  stopAfter: false       # --stop-after quits the game after a passing run
+
+settings:
+  timeout: 120s
+  stopOnFailure: true
+
+variables:
+  character: SmokeTest
+  world: SmokeTestWorld
+  mod_command: help      # replace with your mod's own console command
+  mod_answer: help       # and text its output must contain
+
+tests:
+  # Started in a world? This step fails after about 15 s (code=unreachable)
+  # instead of waiting out its timeout: log out first.
+  - name: Main menu
+    waitFor:
+      state: MainMenu
+      timeout: 300s
+      message: Waiting for Valheim to reach the main menu...
+
+  - name: Throwaway character
+    commands:
+      - cli_create_character ${character} --replace --local
+    expect:
+      output: 'contains "OK: Created and selected character"'
+
+  - name: Throwaway world
+    description: The next step's wait is the check; the game's own loading log can arrive in this reply.
+    commands:
+      - cli_start_local_world ${world}
+
+  - name: In the world
+    waitFor:
+      state: InWorld
+      timeout: 300s
+      stall: 120s        # the load's heartbeat shows progress; nothing changing for 2 minutes ends the step
+      message: Waiting for the world to load...
+
+  - name: The player exists
+    commands:
+      - cli_player_state
+    expect:
+      output: 'contains "OK: position="'
+
+  - name: Player safety on
+    description: God mode and ghost, so nothing in the world interrupts the run.
+    commands:
+      - cli_set_player_safety true
+    expect:
+      output: 'contains "enabled=True"'
+
+  - name: Your mod answers
+    commands:
+      - ${mod_command}
+    expect:
+      output: 'contains "${mod_answer}"'
+
+  - name: Screenshot
+    description: Written under the game's valheimCLI/screenshots folder; the reply names the file.
+    commands:
+      - cli_screenshot smoke
+    expect:
+      output: 'contains "OK: screenshot"'
+
+cleanup:
+  - cli_logout_save

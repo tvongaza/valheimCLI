@@ -25,6 +25,8 @@ namespace valheimCLI
     ///                                                        verify the PNG, move it into place
     ///   cli_until   <timeout> <needle> <command...>          re-run a console command until a line contains needle
     ///   cli_skip_intro [timeout=60]                          end the first-spawn intro as the menu's Skip does, wait for the respawn
+    ///   cli_save    [timeout=120]                            save the world (and profiles) as the save command does, answer when
+    ///                                                        the save thread has ended and the save number says it completed
     ///   cli_clear_view is the verified clear (CustomCommands): destroy, recount next frame, repeat up to three passes
     ///
     /// Arrive, env, capture, clear and skip_intro share the player and the camera, so they
@@ -32,8 +34,8 @@ namespace valheimCLI
     /// When a request times out the server abandons it; the coroutine then
     /// issues no further actions, lets an effect it already started settle
     /// (the teleport lands or bounces, the screenshot file finishes), and only
-    /// then releases the gate. cli_until is not gated: it only re-runs the
-    /// command it was given.
+    /// then releases the gate. cli_until and cli_save are not gated: one only
+    /// re-runs the command it was given, the other touches neither player nor camera.
     /// </summary>
     public static class AsyncCommands
     {
@@ -116,6 +118,19 @@ namespace valheimCLI
                 string command = string.Join(" ", args.Args.Skip(3));
                 Start("until", args.Context.AddString, ctx => Until(ctx, timeout, needle, command), gated: false);
             }, isCheat: true);
+
+            // Not a cheat: saving is what the vanilla save command does, and a dedicated
+            // server must be able to save without devcommands.
+            new Terminal.ConsoleCommand("cli_save", "Save the world (and player profiles) and answer when the save has completed: cli_save [timeout=120]. On the game that holds the world: a dedicated server or a host.", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
+            {
+                float timeout = 120f;
+                if (args.Length >= 2 && (!TryF(args[1], out timeout) || timeout <= 0f))
+                {
+                    args.Context.AddString("Usage: cli_save [timeout seconds=120]");
+                    return;
+                }
+                Start("save", args.Context.AddString, ctx => Save(ctx, timeout), gated: false);
+            }, isCheat: false);
         }
 
         /// <summary>cli_clear_view: destroy the clutter, recount on the next frame, repeat while anything remains (up to three passes).</summary>
@@ -745,6 +760,83 @@ namespace valheimCLI
             }
             string summary = string.Join(" ", byKind.Select(kv => $"{kv.Key}={kv.Value}"));
             ctx.Output($"OK: CLEAR_VIEW removed={removed} passes={Math.Min(passes, 3)} remaining={remaining} radius={radius:F0} at={x:F0},{z:F0} {summary}".TrimEnd());
+        }
+
+        // ---- cli_save ----
+        // The vanilla save command goes through ZNet.RPC_Save, whose HardSaveBlock reads
+        // PlatformManager.DistributionPlatform.Platform whenever the last save was under
+        // 60 s ago; that is null on a dedicated server and throws. This calls ZNet.Save
+        // directly, as the autosave does, and follows the save thread it starts. The
+        // thread records nothing but the save number: it moves on only when every file
+        // was written (SaveSystem.EndSave(writeOK: true)).
+        private static IEnumerator Save(Context ctx, float timeout)
+        {
+            ZNet znet = ZNet.instance;
+            World? world = ZNet.World;
+            if (znet == null || Game.instance == null || world == null)
+            {
+                ctx.Output("ERROR: code=no_world message=no world is loaded");
+                yield break;
+            }
+            if (!znet.IsServer())
+            {
+                ctx.Output("ERROR: code=not_server message=this game is a client; the world is saved by the server it is connected to (run cli_save there)");
+                yield break;
+            }
+
+            Stopwatch clock = Stopwatch.StartNew();
+            SaveOutcome outcome = new SaveOutcome
+            {
+                TimeoutSeconds = timeout,
+                World = world.m_name,
+                Directory = world.GetSaveDirectory(world.m_fileSource)
+            };
+
+            // A save already under way (an autosave, another cli_save) would be joined on
+            // the main thread by the next one; let it finish first, then save.
+            while (znet.IsSaving() && clock.Elapsed.TotalSeconds < timeout && !ctx.Cancelled)
+                yield return null;
+
+            outcome.Skipped = SaveOutcome.SkipReason(
+                SaveSystem.HasSessionFlag(SaveSystemSessionFlags.DontSaveWorld),
+                ZNet.m_loadError,
+                ZoneSystem.instance != null && ZoneSystem.instance.SkipSaving(),
+                DungeonDB.instance != null && DungeonDB.instance.SkipSaving(),
+                znet.EnoughDiskSpaceAvailable(out bool _));
+            if (ctx.Cancelled)
+            {
+                Cancelled(ctx, "before a save was started; nothing written");
+                yield break;
+            }
+            if (znet.IsSaving())
+            {
+                outcome.Milliseconds = clock.ElapsedMilliseconds;
+                ctx.Output($"ERROR: code=save_timeout ms={outcome.Milliseconds} message=an earlier save was still writing after {timeout:F0}s; no new save was started");
+                yield break;
+            }
+            if (outcome.Skipped.Length > 0)
+            {
+                ctx.Output(outcome.Reply());
+                yield break;
+            }
+
+            outcome.SaveNumberBefore = SaveSystem.GetSaveNumber();
+            Game.instance.SavePlayerProfile(setLogoutPoint: true);
+            znet.Save(sync: false, saveOtherPlayerProfiles: true, waitForNextFrame: false);
+            System.Threading.Thread? thread = znet.m_saveThread;
+            outcome.Started = thread != null;
+            while (thread != null && thread.IsAlive && clock.Elapsed.TotalSeconds < timeout && !ctx.Cancelled)
+                yield return null;
+
+            outcome.Finished = thread != null && !thread.IsAlive;
+            outcome.SaveNumberAfter = SaveSystem.GetSaveNumber();
+            outcome.Milliseconds = clock.ElapsedMilliseconds;
+            if (ctx.Cancelled && !outcome.Finished)
+            {
+                Cancelled(ctx, "the save thread keeps writing and finishes on its own");
+                yield break;
+            }
+            ctx.Output(outcome.Reply());
         }
 
         // ---- cli_until ----

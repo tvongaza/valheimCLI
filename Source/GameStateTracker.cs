@@ -26,6 +26,7 @@ namespace valheimCLI
         private static readonly MethodInfo? ZoneSystemEstimatedLocationSecondsMethod = typeof(ZoneSystem).GetMethod("GetEstimatedGenerationCompletionTimeFromNow", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         private static readonly MethodInfo? ZoneSystemGetLocationListMethod = typeof(ZoneSystem).GetMethod("GetLocationList", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         private static readonly MethodInfo? ZoneSystemIsActiveAreaLoadedMethod = typeof(ZoneSystem).GetMethod("IsActiveAreaLoaded", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        private static readonly FieldInfo? ZNetHostSocketField = typeof(ZNet).GetField("m_hostSocket", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 
         private readonly ManualLogSource _logger;
         private GameState _currentState = GameState.Unknown;
@@ -101,6 +102,10 @@ namespace valheimCLI
         {
             string phase = DetectLoadPhase(state);
             bool gamePresent = Game.instance != null;
+            // A logout keeps the player and the world for a few frames (or through a
+            // long save); this says the world is on its way out, so a wait for the
+            // main menu knows the menu is coming.
+            bool shuttingDown = gamePresent && Game.instance!.IsShuttingDown();
             bool mainMenuPresent = FejdStartup.instance != null && Game.instance == null;
             bool localPlayerPresent = Player.m_localPlayer != null;
             ZNet? znet = ZNet.instance;
@@ -126,6 +131,29 @@ namespace valheimCLI
                 }
             }
 
+            // A dedicated server has a world but never a local player: its state stays
+            // InWorldNoPlayer. It is ready for players once its locations exist and it
+            // listens for them, which it does on every boot path (a new world opens after
+            // generating its locations, an existing one right after loading).
+            bool dedicated = IsDedicatedServer();
+            bool listening = IsListening(znet);
+
+            // A client the server asked for a password it was not given waits at the password prompt with
+            // nothing changing; a join's wait says so instead of running to its timeout.
+            bool passwordPrompt = false;
+            if (znet != null)
+            {
+                try
+                {
+                    passwordPrompt = znet.InPasswordDialog();
+                }
+                catch
+                {
+                    // A dedicated server has no dialog object.
+                    passwordPrompt = false;
+                }
+            }
+
             float respawnWait = 0f;
             if (Game.instance != null && GameRespawnWaitField != null)
             {
@@ -139,6 +167,7 @@ namespace valheimCLI
             return "state=" + StateToString(state) +
                    " phase=" + phase +
                    " game=" + Bool(gamePresent) +
+                   " shuttingDown=" + Bool(shuttingDown) +
                    " mainMenu=" + Bool(mainMenuPresent) +
                    " localPlayer=" + Bool(localPlayerPresent) +
                    " znet=" + Bool(znetPresent) +
@@ -150,7 +179,10 @@ namespace valheimCLI
                    " estimatedLocationSeconds=" + estimatedLocationSeconds.ToString("F1", CultureInfo.InvariantCulture) +
                    " locationCount=" + locationCount.ToString(CultureInfo.InvariantCulture) +
                    " activeAreaLoaded=" + Bool(activeAreaLoaded) +
-                   " respawnWait=" + respawnWait.ToString("F1", CultureInfo.InvariantCulture);
+                   " respawnWait=" + respawnWait.ToString("F1", CultureInfo.InvariantCulture) +
+                   " dedicated=" + Bool(dedicated) +
+                   " listening=" + Bool(listening) +
+                   " passwordPrompt=" + Bool(passwordPrompt);
         }
 
         private static string DetectLoadPhase(GameState state)
@@ -168,6 +200,18 @@ namespace valheimCLI
             if (IsZNetConnecting())
             {
                 return "connecting_screen";
+            }
+
+            if (Game.instance != null && IsDedicatedServer())
+            {
+                // No player to spawn and no active area of its own: a dedicated server
+                // generates its locations (a new world), then opens for players.
+                if (ZoneSystem.instance != null && !IsLocationsGenerated(ZoneSystem.instance))
+                {
+                    return "generating_locations";
+                }
+
+                return IsListening(ZNet.instance) ? "server_ready" : "opening_server";
             }
 
             if (Game.instance != null && Player.m_localPlayer == null)
@@ -201,6 +245,40 @@ namespace valheimCLI
             }
 
             return "unknown";
+        }
+
+        private static bool s_dedicated;
+
+        /// <summary>
+        /// This process is a dedicated server. Known once ZNet exists; remembered, as a
+        /// process never changes between the client and the server build.
+        /// </summary>
+        public static bool IsDedicatedServer()
+        {
+            if (!s_dedicated && ZNet.instance != null)
+            {
+                s_dedicated = ZNet.instance.IsDedicated();
+            }
+
+            return s_dedicated;
+        }
+
+        /// <summary>The game is a server (dedicated, or a host that opened its world) with its network socket open for players.</summary>
+        private static bool IsListening(ZNet? znet)
+        {
+            if (znet == null || ZNetHostSocketField == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                return znet.IsServer() && ZNetHostSocketField.GetValue(znet) != null;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static float NormalizeEstimatedSeconds(float seconds)

@@ -39,6 +39,11 @@
     <Compile Include="../../CLI/Testing/ConnectionLoss.cs" Link="CLI/ConnectionLoss.cs" />
     <Compile Include="../../Source/StaticMemberCall.cs" Link="Source/StaticMemberCall.cs" />
     <Compile Include="../../Source/CallValues.cs" Link="Source/CallValues.cs" />
+    <Compile Include="../../Source/SaveOutcome.cs" Link="Source/SaveOutcome.cs" />
+    <Compile Include="../../CLI/Testing/GameLauncher.cs" Link="CLI/GameLauncher.cs" />
+    <Compile Include="../../CLI/Testing/WaitProgress.cs" Link="CLI/WaitProgress.cs" />
+    <Compile Include="../../CLI/Testing/CommandRetry.cs" Link="CLI/CommandRetry.cs" />
+    <Compile Include="../../CLI/Testing/SilentReply.cs" Link="CLI/SilentReply.cs" />
   </ItemGroup>
 
   <ItemGroup>

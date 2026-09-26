@@ -10,18 +10,26 @@ public class GameLauncher
     private readonly int _port;
     private readonly string? _connect;
     private readonly string? _password;
+    private readonly bool _remote;
     private Process? _gameProcess;
 
-    public GameLauncher(string? gamePath = null, string host = ConnectionDefaults.Host, int port = ConnectionDefaults.Port, string? connect = null, string? password = null)
+    /// <param name="remote">
+    /// The game is on another machine (reached through a tunnel on this machine's port).
+    /// Its process and its BepInEx log are not here, so none of this machine's are read:
+    /// a local Valheim (someone playing) would otherwise stand in for the remote game.
+    /// </param>
+    public GameLauncher(string? gamePath = null, string host = ConnectionDefaults.Host, int port = ConnectionDefaults.Port, string? connect = null, string? password = null, bool remote = false)
     {
         _gamePath = ResolveGamePath(gamePath);
         _host = host;
         _port = port;
         _connect = connect;
         _password = password;
+        _remote = remote;
     }
 
     public string GamePath => _gamePath;
+    public bool Remote => _remote;
     public bool HasServerConnect => !string.IsNullOrWhiteSpace(_connect);
 
     /// <summary>
@@ -67,6 +75,11 @@ public class GameLauncher
     /// </summary>
     public bool IsGameRunning()
     {
+        if (_remote)
+        {
+            return false;
+        }
+
         return ProcessExists("valheim") || ProcessExists("Valheim") || ProcessExists("valheim.x86_64");
     }
 
@@ -126,6 +139,12 @@ public class GameLauncher
     /// </summary>
     public bool LaunchGame()
     {
+        if (_remote)
+        {
+            Console.Error.WriteLine("Cannot launch a remote game (--remote): start it on its own machine.");
+            return false;
+        }
+
         string scriptPath = Path.Combine(_gamePath, "run_bepinex.sh");
 
         if (!File.Exists(scriptPath))
@@ -188,54 +207,87 @@ public class GameLauncher
     }
 
     /// <summary>
-    /// Wait for the game to be ready (TCP server accepting connections)
+    /// Waits for a readiness target under a timeout only (a rejected server connection
+    /// also ends it). Launch and join use this; heartbeats are printed when onHeartbeat is set.
     /// </summary>
-    public async Task<bool> WaitForReadyAsync(TimeSpan timeout, CancellationToken cancellationToken = default)
-    {
-        DateTime deadline = DateTime.Now.Add(timeout);
-        TimeSpan pollInterval = TimeSpan.FromSeconds(2);
-
-        while (DateTime.Now < deadline && !cancellationToken.IsCancellationRequested)
-        {
-            if (TryConnect())
-            {
-                return true;
-            }
-
-            await Task.Delay(pollInterval, cancellationToken);
-        }
-
-        return false;
-    }
-
     public async Task<GameStatus> WaitForTargetAsync(
         WaitTarget target,
         TimeSpan timeout,
         TimeSpan interval,
+        CancellationToken cancellationToken = default,
+        TimeSpan? progress = null,
+        Action<WaitHeartbeat>? onHeartbeat = null,
+        bool endAtPasswordPrompt = false)
+    {
+        WaitPolicy policy = WaitPolicy.TimeoutOnly(timeout, onHeartbeat != null ? progress ?? WaitPolicy.DefaultProgress : TimeSpan.Zero);
+        policy = new WaitPolicy
+        {
+            Timeout = policy.Timeout,
+            Progress = policy.Progress,
+            Stall = policy.Stall,
+            AllowUnreachable = policy.AllowUnreachable,
+            EndAtPasswordPrompt = endAtPasswordPrompt
+        };
+        WaitResult result = await WaitAsync(target, policy, interval, onHeartbeat, cancellationToken);
+        return result.Status;
+    }
+
+    /// <summary>
+    /// Polls the status every interval and lets a WaitTracker decide: reached, timed out,
+    /// stalled or unreachable. Each observation is stamped with the moment the status was
+    /// asked for, because a game whose main thread is busy answers late.
+    /// </summary>
+    public async Task<WaitResult> WaitAsync(
+        WaitTarget target,
+        WaitPolicy policy,
+        TimeSpan interval,
+        Action<WaitHeartbeat>? onHeartbeat = null,
         CancellationToken cancellationToken = default)
     {
-        DateTime deadline = DateTime.Now.Add(timeout);
-        GameStatus last = GetStatus();
-
-        while (DateTime.Now < deadline && !cancellationToken.IsCancellationRequested)
+        DateTime start = DateTime.Now;
+        WaitTracker tracker = new WaitTracker(target, policy, start);
+        GameStatus status;
+        WaitStep step;
+        while (true)
         {
-            last = GetStatus();
-            if (last.Satisfies(target))
+            DateTime observedAt = DateTime.Now;
+            status = GetStatus();
+            step = tracker.Observe(status, observedAt);
+            if (step.Heartbeat != null)
             {
-                return last;
+                onHeartbeat?.Invoke(step.Heartbeat);
             }
 
-            if (target == WaitTarget.ServerConnected && last.HasUnrecoverableConnectionFailure)
+            if (step.Outcome != WaitOutcome.Waiting || cancellationToken.IsCancellationRequested)
             {
-                return last;
+                break;
             }
 
-            await Task.Delay(interval, cancellationToken);
+            TimeSpan left = start + policy.Timeout - DateTime.Now;
+            TimeSpan delay = left < interval ? left : interval;
+            if (delay > TimeSpan.Zero)
+            {
+                await Task.Delay(delay, cancellationToken);
+            }
         }
 
-        last.WaitTimedOut = true;
-        last.WaitTargetName = WaitTargets.ToName(target);
-        return last;
+        if (step.Outcome != WaitOutcome.Reached)
+        {
+            status.WaitTimedOut = step.Outcome == WaitOutcome.TimedOut || step.Outcome == WaitOutcome.Waiting;
+            status.WaitTargetName = WaitTargets.ToName(target);
+        }
+
+        WaitOutcome outcome = step.Outcome == WaitOutcome.Waiting ? WaitOutcome.TimedOut : step.Outcome;
+        return new WaitResult
+        {
+            Outcome = outcome,
+            ErrorCode = step.ErrorCode.Length > 0 ? step.ErrorCode : WaitTracker.ErrorCode(outcome),
+            Reason = step.Reason,
+            Status = status,
+            Elapsed = tracker.Elapsed,
+            Unchanged = tracker.Unchanged,
+            Heartbeats = tracker.Heartbeats
+        };
     }
 
     public async Task<JoinResult> JoinDirectAsync(
@@ -246,10 +298,12 @@ public class GameLauncher
         TimeSpan timeout,
         TimeSpan interval,
         CancellationToken cancellationToken = default,
-        bool skipIntro = false)
+        bool skipIntro = false,
+        TimeSpan? progress = null,
+        Action<WaitHeartbeat>? onHeartbeat = null)
     {
         JoinResult result = new() { Server = server };
-        GameStatus terminalStatus = await WaitForTargetAsync(WaitTarget.Terminal, timeout, interval, cancellationToken);
+        GameStatus terminalStatus = await WaitForTargetAsync(WaitTarget.Terminal, timeout, interval, cancellationToken, progress, onHeartbeat);
         if (!terminalStatus.Satisfies(WaitTarget.Terminal))
         {
             result.ErrorCode = terminalStatus.WaitTimedOut ? "timeout" : terminalStatus.DiagnosticCode;
@@ -269,7 +323,7 @@ public class GameLauncher
 
         if (!string.IsNullOrWhiteSpace(character))
         {
-            GameStatus menuStatus = await WaitForTargetAsync(WaitTarget.MainMenu, timeout, interval, cancellationToken);
+            GameStatus menuStatus = await WaitForTargetAsync(WaitTarget.MainMenu, timeout, interval, cancellationToken, progress, onHeartbeat);
             if (!menuStatus.Satisfies(WaitTarget.MainMenu))
             {
                 result.ErrorCode = menuStatus.WaitTimedOut ? "timeout" : menuStatus.DiagnosticCode;
@@ -316,7 +370,9 @@ public class GameLauncher
             return result;
         }
 
-        GameStatus connectedStatus = await WaitForTargetAsync(WaitTarget.ServerConnected, timeout, interval, cancellationToken);
+        // The join passes its password with the connect, so a prompt that stays open means the server asked for a
+        // password the join did not give: the join ends there instead of at its timeout.
+        GameStatus connectedStatus = await WaitForTargetAsync(WaitTarget.ServerConnected, timeout, interval, cancellationToken, progress, onHeartbeat, endAtPasswordPrompt: true);
         result.FinalStatus = connectedStatus;
         if (connectedStatus.Satisfies(WaitTarget.ServerConnected))
         {
@@ -343,6 +399,41 @@ public class GameLauncher
             return "Server password was rejected.";
         }
 
+        if (status.PasswordPrompt)
+        {
+            return "The server asks for a password and the join gave none; pass --password-file.";
+        }
+
+        if (connectionStatus.Contains("errorbanned"))
+        {
+            return "Refused: banned from this server, or not on its permitted list.";
+        }
+
+        if (connectionStatus.Contains("errorfull"))
+        {
+            return "Refused: the server is full.";
+        }
+
+        if (connectionStatus.Contains("erroralreadyconnected"))
+        {
+            return "Refused: this player is already connected to the server.";
+        }
+
+        if (connectionStatus.Contains("errorkicked"))
+        {
+            return "Kicked by the server.";
+        }
+
+        if (connectionStatus.Contains("errorplatformexcluded") || connectionStatus.Contains("errorcrossplayprivilege"))
+        {
+            return "Refused: the server does not accept this platform (crossplay).";
+        }
+
+        if (connectionStatus.Contains("errorconnectfailed"))
+        {
+            return "The connection to the server could not be made.";
+        }
+
         if (connectionStatus.Contains("disconnected"))
         {
             return "Disconnected before server connection completed.";
@@ -356,6 +447,13 @@ public class GameLauncher
     /// </summary>
     public void StopGame()
     {
+        // A remote game is not ours to stop, and killing by name would stop a local one.
+        if (_remote)
+        {
+            Console.Error.WriteLine("Not stopping a remote game (--remote): stop it on its own machine.");
+            return;
+        }
+
         // First try to kill the tracked process
         if (_gameProcess != null && !_gameProcess.HasExited)
         {
@@ -392,7 +490,7 @@ public class GameLauncher
         PluginLogInfo pluginLog = GetPluginLogInfo();
         if (TryOpenClient(out ValheimClient client))
         {
-            using (client)
+            try
             {
                 connected = true;
                 Dictionary<string, string> statusDetails = client.GetStatusDetails();
@@ -405,32 +503,45 @@ public class GameLauncher
                     state = client.GetState();
                 }
 
+                bool statusLineRead = client.StatusLineRead;
                 client.TryGetConnectionStatus(out connectionStatus, out server);
-                return new GameStatus
+                GameStatus answered = new GameStatus
                 {
-                    IsRunning = running,
+                    IsRunning = GameStatus.RunningFrom(running, connected),
+                    ProcessSeenLocally = running,
+                    Remote = _remote,
                     IsConnected = connected,
                     GamePath = _gamePath,
                     Host = _host,
                     Port = _port,
                     State = state,
-                    LoadPhase = GetDetail(statusDetails, "phase"),
-                    LocationsGenerated = GetBoolDetail(statusDetails, "locationsGenerated"),
-                    LocationProgress = GetFloatDetail(statusDetails, "locationProgress"),
-                    EstimatedLocationSeconds = GetFloatDetail(statusDetails, "estimatedLocationSeconds"),
-                    LocationCount = GetIntDetail(statusDetails, "locationCount"),
-                    ActiveAreaLoaded = GetBoolDetail(statusDetails, "activeAreaLoaded"),
-                    RespawnWait = GetFloatDetail(statusDetails, "respawnWait"),
                     ConnectionStatus = connectionStatus,
                     ConnectedServer = server,
                     PluginLog = pluginLog
                 };
+                ApplyStatusDetails(answered, statusDetails, statusLineRead);
+                return answered;
+            }
+            catch (Exception ex) when (ex is IOException || ex is System.Net.Sockets.SocketException || ex is ObjectDisposedException || ex is InvalidOperationException)
+            {
+                // The game went away between the greeting and the answer (it exited, or the
+                // tunnel to it closed): this poll found no plugin, which a wait counts as such.
+                connected = false;
+                state = "Unknown";
+                connectionStatus = "";
+                server = "";
+            }
+            finally
+            {
+                client.Dispose();
             }
         }
 
         return new GameStatus
         {
             IsRunning = running,
+            ProcessSeenLocally = running,
+            Remote = _remote,
             IsConnected = connected,
             GamePath = _gamePath,
             Host = _host,
@@ -440,6 +551,27 @@ public class GameLauncher
             ConnectedServer = server,
             PluginLog = pluginLog
         };
+    }
+
+    /// <summary>
+    /// Copies the plugin's status details into a status. From a STATUS line (fromStatusLine) the
+    /// fields it carried are kept too, so a field the plugin build does not report is told apart
+    /// from one it reports as false; from the state-only fallback nothing is known about them.
+    /// </summary>
+    internal static void ApplyStatusDetails(GameStatus status, Dictionary<string, string> details, bool fromStatusLine)
+    {
+        status.LoadPhase = GetDetail(details, "phase");
+        status.ShuttingDown = GetBoolDetail(details, "shuttingDown");
+        status.LocationsGenerated = GetBoolDetail(details, "locationsGenerated");
+        status.LocationProgress = GetFloatDetail(details, "locationProgress");
+        status.EstimatedLocationSeconds = GetFloatDetail(details, "estimatedLocationSeconds");
+        status.LocationCount = GetIntDetail(details, "locationCount");
+        status.ActiveAreaLoaded = GetBoolDetail(details, "activeAreaLoaded");
+        status.RespawnWait = GetFloatDetail(details, "respawnWait");
+        status.Dedicated = GetBoolDetail(details, "dedicated");
+        status.Listening = GetBoolDetail(details, "listening");
+        status.PasswordPrompt = GetBoolDetail(details, "passwordPrompt");
+        status.ReportedFields = fromStatusLine ? new HashSet<string>(details.Keys, StringComparer.OrdinalIgnoreCase) : null;
     }
 
     private static string GetDetail(Dictionary<string, string> details, string key)
@@ -478,6 +610,11 @@ public class GameLauncher
 
     public PluginLogInfo GetPluginLogInfo()
     {
+        if (_remote)
+        {
+            return new PluginLogInfo();
+        }
+
         string logPath = Path.Combine(_gamePath, "BepInEx", "LogOutput.log");
         PluginLogInfo info = new() { Path = logPath };
         if (!File.Exists(logPath))
@@ -493,6 +630,7 @@ public class GameLauncher
             using (StreamReader reader = new StreamReader(stream))
             {
                 text = reader.ReadToEnd();
+                info.Length = stream.Length;
             }
             MatchCollection matches = Regex.Matches(text, @"valheimCLI loaded\. CLI server on port (?<port>\d+)", RegexOptions.IgnoreCase);
             if (matches.Count == 0)
@@ -518,23 +656,66 @@ public class GameLauncher
 
 public class GameStatus
 {
+    /// <summary>
+    /// The game is running: its process is on this machine, or its plugin answers on
+    /// the port. A game reached through a tunnel, or a dedicated server (a process
+    /// under another name), has no local process named valheim but answers.
+    /// </summary>
     public bool IsRunning { get; set; }
+
+    /// <summary>A Valheim client process was found on this machine.</summary>
+    public bool ProcessSeenLocally { get; set; }
+
+    /// <summary>
+    /// The game is on another machine (--remote): only its plugin's answers describe it,
+    /// so a game that does not answer is not known to be starting or stopped.
+    /// </summary>
+    public bool Remote { get; set; }
+
+    public static bool RunningFrom(bool processSeenLocally, bool pluginAnswered) => processSeenLocally || pluginAnswered;
+
     public bool IsConnected { get; set; }
     public string GamePath { get; set; } = "";
     public string Host { get; set; } = "";
     public int Port { get; set; }
     public string State { get; set; } = "Unknown";
     public string LoadPhase { get; set; } = "";
+
+    /// <summary>The world is being shut down (a logout is under way); false from a plugin that does not report it.</summary>
+    public bool ShuttingDown { get; set; }
     public bool LocationsGenerated { get; set; }
     public float LocationProgress { get; set; }
     public float EstimatedLocationSeconds { get; set; }
     public int LocationCount { get; set; }
     public bool ActiveAreaLoaded { get; set; }
     public float RespawnWait { get; set; }
+
+    /// <summary>The game is a dedicated server (no local player, ever); false from a plugin that does not report it.</summary>
+    public bool Dedicated { get; set; }
+
+    /// <summary>The game is a server with its network socket open for players; false from a plugin that does not report it.</summary>
+    public bool Listening { get; set; }
     public string ConnectionStatus { get; set; } = "";
     public string ConnectedServer { get; set; } = "";
+
+    /// <summary>The game waits at the server's password prompt (the join gave no password); false from an older plugin.</summary>
+    public bool PasswordPrompt { get; set; }
     public bool WaitTimedOut { get; set; }
     public string WaitTargetName { get; set; } = "";
+
+    /// <summary>
+    /// The fields of the plugin's status line, or null when none was read (the plugin did not answer,
+    /// or answered with its state alone). A field the plugin build does not report reads as false above;
+    /// this tells the two apart.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public HashSet<string>? ReportedFields { get; set; }
+
+    /// <summary>Which of these fields the plugin's status line did not carry; empty when it carried all or none was read.</summary>
+    public List<string> MissingFields(IEnumerable<string> fields)
+    {
+        return ReportedFields == null ? new List<string>() : fields.Where(field => !ReportedFields.Contains(field)).ToList();
+    }
     public PluginLogInfo PluginLog { get; set; } = new();
 
     public bool ProcessReady => IsRunning;
@@ -544,12 +725,29 @@ public class GameStatus
     public bool InWorldReady => State.Equals("InWorld", StringComparison.OrdinalIgnoreCase);
     public bool LocalPlayerReady => InWorldReady;
     public bool ServerConnected => InWorldReady && ConnectionStatus.Equals("Connected", StringComparison.OrdinalIgnoreCase);
-    public bool HasUnrecoverableConnectionFailure => ConnectionStatus.Contains("ErrorVersion", StringComparison.OrdinalIgnoreCase) ||
-                                                     ConnectionStatus.Contains("ErrorPassword", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// A server's world is up for players: its locations exist, it listens, and it is not
+    /// shutting down. The same for a new world (after generating its locations) and an
+    /// existing one (straight after loading), unlike the log line written only when locations are generated.
+    /// </summary>
+    public bool ServerReady => IsConnected && LocationsGenerated && Listening && !ShuttingDown;
+    /// <summary>
+    /// The connection attempt is over: every ZNet.ConnectionStatus that starts with Error (wrong version or
+    /// password, banned or not permitted, full, kicked, already connected, platform or crossplay refused, failed
+    /// or dropped) ends that attempt, and only a new join can connect. A banned player used to wait out the whole
+    /// join timeout on ErrorBanned (25 Sep 2026).
+    /// </summary>
+    public bool HasUnrecoverableConnectionFailure => ConnectionStatus.StartsWith("Error", StringComparison.OrdinalIgnoreCase);
     public string DiagnosticCode
     {
         get
         {
+            if (Remote && !IsConnected)
+            {
+                return "remote_not_answering";
+            }
+
             if (!IsRunning)
             {
                 return "game_not_running";
@@ -586,6 +784,8 @@ public class GameStatus
             string code = DiagnosticCode;
             switch (code)
             {
+                case "remote_not_answering":
+                    return $"Nothing answers on {Host}:{Port}, and this machine cannot see a remote game's process or log.";
                 case "game_not_running":
                     return "Valheim process is not running.";
                 case "wrong_port":
@@ -615,6 +815,7 @@ public class GameStatus
             WaitTarget.InWorld => InWorldReady,
             WaitTarget.LocalPlayer => LocalPlayerReady,
             WaitTarget.ServerConnected => ServerConnected,
+            WaitTarget.ServerReady => ServerReady,
             _ => false
         };
     }
@@ -625,6 +826,19 @@ public class GameStatus
         string connectionStatus = IsConnected ? "Connected" : "Not connected";
         return $"Game: {runningStatus}, Server: {connectionStatus} ({Host}:{Port}), State: {State}";
     }
+}
+
+public class WaitResult
+{
+    public WaitOutcome Outcome { get; set; }
+
+    /// <summary>"" when reached; otherwise timeout, stalled, unreachable, game_exited or plugin_lost.</summary>
+    public string ErrorCode { get; set; } = "";
+    public string Reason { get; set; } = "";
+    public GameStatus Status { get; set; } = new();
+    public TimeSpan Elapsed { get; set; }
+    public TimeSpan Unchanged { get; set; }
+    public List<WaitHeartbeat> Heartbeats { get; set; } = new();
 }
 
 public class JoinResult
