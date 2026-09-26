@@ -35,6 +35,7 @@
     <Compile Include="../../CLI/Testing/CommandMetadata.cs" Link="CLI/CommandMetadata.cs" />
     <Compile Include="../../Source/Expectations.cs" Link="Source/Expectations.cs" />
     <Compile Include="../../CLI/Testing/TestModels.cs" Link="CLI/TestModels.cs" />
+    <Compile Include="../../CLI/Testing/TestRunner.cs" Link="CLI/TestRunner.cs" />
     <Compile Include="../../CLI/Testing/PlanExpectations.cs" Link="CLI/PlanExpectations.cs" />
     <Compile Include="../../Source/LiveReload.cs" Link="Source/LiveReload.cs" />
     <Compile Include="../../CLI/Testing/ConnectionLoss.cs" Link="CLI/ConnectionLoss.cs" />
@@ -55,6 +56,10 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.1" />
     <!-- Test plans are YAML; the plan model is compiled from the CLI above. -->
     <PackageReference Include="YamlDotNet" Version="16.2.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="../../CLI/tests/*.yaml" Link="SamplePlans/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
