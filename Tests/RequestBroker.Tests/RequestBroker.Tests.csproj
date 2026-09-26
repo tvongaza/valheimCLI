@@ -26,12 +26,17 @@
     <Compile Include="../../CLI/Testing/CommandInfo.cs" Link="CLI/CommandInfo.cs" />
     <Compile Include="../../CLI/Testing/CommandMetadata.cs" Link="CLI/CommandMetadata.cs" />
     <Compile Include="../../CLI/Testing/CliModels.cs" Link="CLI/CliModels.cs" />
+    <Compile Include="../../Source/Expectations.cs" Link="Source/Expectations.cs" />
+    <Compile Include="../../CLI/Testing/TestModels.cs" Link="CLI/TestModels.cs" />
+    <Compile Include="../../CLI/Testing/PlanExpectations.cs" Link="CLI/PlanExpectations.cs" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.10.0" />
     <PackageReference Include="xunit" Version="2.8.1" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.1" />
+    <!-- Test plans are YAML; the plan model is compiled from the CLI above. -->
+    <PackageReference Include="YamlDotNet" Version="16.2.1" />
   </ItemGroup>
 
 </Project>

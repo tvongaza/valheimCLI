@@ -15,7 +15,7 @@ namespace valheimCLI
         private const string ModName = "valheimCLI";
         private const string ModVersion = "1.0.0";
         private const string Author = "valheimCLI";
-        private const string ModGUID = Author + "." + ModName;
+        internal const string ModGUID = Author + "." + ModName;
         private static string ConfigFileName = ModGUID + ".cfg";
         private static string ConfigFileFullPath = BepInEx.Paths.ConfigPath + Path.DirectorySeparatorChar + ConfigFileName;
 
@@ -39,6 +39,7 @@ namespace valheimCLI
 
         public void Awake()
         {
+            ManifestCommands.RecordOwnLoad(DateTime.UtcNow);
             Instance = this;
 
             _enabledConfig = Config.Bind("Server", "Enabled", true, "Enable the command server");
@@ -46,6 +47,9 @@ namespace valheimCLI
             _autoStartQueuedJoinConfig = Config.Bind("ClientLaunch", "AutoStartQueuedJoin", true, "Automatically start the selected character when Valheim has a queued startup/server join.");
             _allowOnServerClientsConfig = Config.Bind("Server", "AllowOnServerClients", false, "Let valheimCLI's own cli_ commands run while this client is joined to a dedicated server. Valheim 1.0 refuses every cheat command on such a client, admin or not. For test stations: the server cannot see or stop it.");
             ClientCommandAccess.AllowOnServerClients = _allowOnServerClientsConfig.Value;
+            ManifestCommands.FileConfig = Config.Bind("Expectations", "File", "", "A file of key=value lines naming the plugin builds (and optionally the world) this game must run; see docs/expectations.md. While it does not hold, every command sent through the CLI except the diagnostics (cli_manifest, cli_world, cli_expect) is refused. A relative path is relative to the BepInEx config folder. Empty = off.");
+            ManifestCommands.StrictConfig = Config.Bind("Expectations", "Strict", false, "Also require the expectations file to name every loaded plugin (a plugin not listed is a mismatch; list it as name=any if its build does not matter) and, once a world is loaded, to name the world (world= or worlduid=; world=any accepts any).");
+            ManifestCommands.UseConfig(Config);
             if (HasStartupJoinArgument())
             {
                 RequestAutoStartQueuedJoin();
@@ -98,6 +102,15 @@ namespace valheimCLI
             return snapshot;
         }
 
+        /// <summary>
+        /// Every plugin has loaded by the first frame: check the standing
+        /// expectations once so a mismatch is in the log before any command.
+        /// </summary>
+        private void Start()
+        {
+            ManifestCommands.StandingProblems();
+        }
+
         private void Update()
         {
             _stateTracker?.Update();
@@ -120,6 +133,10 @@ namespace valheimCLI
                     if (string.IsNullOrEmpty(command))
                     {
                         _commandServer.SendOutput("ERROR: code=empty_command message=Empty command.");
+                        continue;
+                    }
+                    if (ManifestCommands.Refuse(command, line => _commandServer.SendOutput(line)))
+                    {
                         continue;
                     }
                     Log.LogInfo($"Executing CLI command #{request.Id}: {command}");
@@ -981,15 +998,26 @@ namespace valheimCLI
         private DateTime _lastReloadTime;
         private const long RELOAD_DELAY = 10000000; // One second
 
+        // Held in a field: a watcher only a local refers to can be collected,
+        // and then it stops raising events.
+        private FileSystemWatcher? _configWatcher;
+
+        /// <summary>
+        /// Reloads the config some time after its file changes. Best effort:
+        /// events arrive on another thread, one within a second of the last
+        /// reload is dropped, and a reload that races the writer fails. Settings
+        /// that must apply to the next command (the [Expectations] entries) are
+        /// re-read by the command path itself; see ManifestCommands.RefreshConfig.
+        /// </summary>
         private void SetupWatcher()
         {
             _lastReloadTime = DateTime.Now;
-            FileSystemWatcher watcher = new(BepInEx.Paths.ConfigPath, ConfigFileName);
-            watcher.Changed += ReadConfigValues;
-            watcher.Created += ReadConfigValues;
-            watcher.Renamed += ReadConfigValues;
-            watcher.IncludeSubdirectories = true;
-            watcher.EnableRaisingEvents = true;
+            _configWatcher = new(BepInEx.Paths.ConfigPath, ConfigFileName);
+            _configWatcher.Changed += ReadConfigValues;
+            _configWatcher.Created += ReadConfigValues;
+            _configWatcher.Renamed += ReadConfigValues;
+            _configWatcher.IncludeSubdirectories = true;
+            _configWatcher.EnableRaisingEvents = true;
         }
 
         private void ReadConfigValues(object sender, FileSystemEventArgs e)

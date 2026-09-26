@@ -29,6 +29,7 @@ namespace valheimCLI
             BuildCommands.Register();
             CartCommands.Register();
             AsyncCommands.Register();
+            ManifestCommands.Register();
 
             new Terminal.ConsoleCommand("cli_create_character", "Create and select a local character: cli_create_character <name> [--replace] [--local] [--skip-intro]. --skip-intro saves it as already spawned once, so it lands at the start without the valkyrie intro", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
             {

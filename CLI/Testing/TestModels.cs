@@ -1,4 +1,5 @@
 using YamlDotNet.Serialization;
+using YamlDotNet.Serialization.NamingConventions;
 
 namespace valheim_cli.Testing;
 
@@ -24,6 +25,16 @@ public class TestPlan
 
     [YamlMember(Alias = "cleanup")]
     public List<string> Cleanup { get; set; } = new();
+
+    public static TestPlan Parse(string yaml)
+    {
+        IDeserializer deserializer = new DeserializerBuilder()
+            .WithNamingConvention(CamelCaseNamingConvention.Instance)
+            .IgnoreUnmatchedProperties()
+            .Build();
+
+        return deserializer.Deserialize<TestPlan>(yaml);
+    }
 }
 
 public class GameSettings
@@ -36,6 +47,17 @@ public class GameSettings
 
     [YamlMember(Alias = "stopAfter")]
     public bool StopAfter { get; set; } = false;
+
+    /// <summary>
+    /// An expectations file (docs/expectations.md) the game must match before the
+    /// first step, relative to the plan file. --expect and --expect-strict override it.
+    /// </summary>
+    [YamlMember(Alias = "expect")]
+    public string Expect { get; set; } = "";
+
+    /// <summary>Check <see cref="Expect"/> in strict mode.</summary>
+    [YamlMember(Alias = "expectStrict")]
+    public bool ExpectStrict { get; set; } = false;
 
     public TimeSpan GetLaunchTimeoutSpan()
     {
@@ -187,6 +209,9 @@ public class TestPlanResult
     public DateTime EndTime { get; set; }
     public string ArtifactDirectory { get; set; } = "";
     public List<TestCaseResult> TestResults { get; set; } = new();
+
+    /// <summary>The expectations check made before the first step; null when none was asked for.</summary>
+    public ExpectationCheck? Expectations { get; set; }
 
     public int Passed => TestResults.Count(r => r.Result == TestResult.Passed);
     public int Failed => TestResults.Count(r => r.Result == TestResult.Failed);

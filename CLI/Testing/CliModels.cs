@@ -10,7 +10,8 @@ public enum CliExitCode
     Timeout = 2,
     ConnectionFailure = 3,
     BadInput = 4,
-    GameNotReady = 5
+    GameNotReady = 5,
+    ExpectationMismatch = 6
 }
 
 public sealed class CliResponse
