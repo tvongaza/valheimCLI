@@ -49,3 +49,7 @@ CLI/evidence/
 
 # CLAUDE.md  # Uncomment to ignore Claude Code context file
 .claude/
+
+# Local integration previews and owned test fixtures
+/artifacts/
+/local-fixtures/
