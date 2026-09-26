@@ -21,6 +21,8 @@
     <Compile Include="../../Source/PlayerModes.cs" Link="Source/PlayerModes.cs" />
     <Compile Include="../../Source/SupportSettle.cs" Link="Source/SupportSettle.cs" />
     <Compile Include="../../Source/ItemSelection.cs" Link="Source/ItemSelection.cs" />
+    <Compile Include="../../Source/ContainerLookup.cs" Link="Source/ContainerLookup.cs" />
+    <Compile Include="../../Source/SceneInspection.cs" Link="Source/SceneInspection.cs" />
     <Compile Include="../../CLI/Testing/CommandInfo.cs" Link="CLI/CommandInfo.cs" />
     <Compile Include="../../CLI/Testing/CommandMetadata.cs" Link="CLI/CommandMetadata.cs" />
     <Compile Include="../../CLI/Testing/CliModels.cs" Link="CLI/CliModels.cs" />

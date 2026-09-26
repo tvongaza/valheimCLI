@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 
 namespace valheimCLI
@@ -30,6 +31,42 @@ namespace valheimCLI
         internal static float CapsuleExtent(float radius, float height, int direction, int axis)
         {
             return direction == axis ? Math.Max(radius, height * 0.5f) : radius;
+        }
+
+        /// <summary>
+        /// A run of points written as consecutive numbers from <paramref name="start"/>
+        /// to the end of the arguments, <paramref name="dimensions"/> numbers per
+        /// point. At least one point, no partial point, every number finite.
+        /// </summary>
+        internal static bool TryPoints(string[] args, int start, int dimensions, out List<float[]> points)
+        {
+            points = new List<float[]>();
+            int count = args.Length - start;
+            if (dimensions < 1 || start < 0 || count <= 0 || count % dimensions != 0)
+            {
+                return false;
+            }
+            for (int i = start; i < args.Length; i += dimensions)
+            {
+                float[] point = new float[dimensions];
+                for (int d = 0; d < dimensions; d++)
+                {
+                    if (!TryFiniteFloat(args[i + d], out point[d]))
+                    {
+                        points.Clear();
+                        return false;
+                    }
+                }
+                points.Add(point);
+            }
+            return true;
+        }
+
+        /// <summary>A whole number from zero to <paramref name="maximum"/>, invariant culture.</summary>
+        internal static bool TryCount(string text, int maximum, out int value)
+        {
+            return int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out value)
+                && value >= 0 && value <= maximum;
         }
     }
 }

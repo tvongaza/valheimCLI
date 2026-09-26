@@ -68,6 +68,7 @@ namespace valheimCLI
             SessionControlCommands.Register();
             TerrainActionCommands.Register();
             CaptureCommands.Register();
+            RockInspectionCommands.Register();
             List<object> registeredHere = CliCommandValidity.NewlyRegistered(beforeRegister, SnapshotCommands());
             CliCommandValidity.RecordOwnCommands(registeredHere);
             Log.LogInfo($"Registered {registeredHere.Count} valheimCLI commands");
