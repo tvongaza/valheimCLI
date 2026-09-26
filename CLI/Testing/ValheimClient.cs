@@ -92,16 +92,43 @@ public class ValheimClient : IDisposable
         _stream?.Dispose();
         _client?.Close();
         _client = null;
+        // Dropped so a caller's finally does not touch a disposed stream and the
+        // next call reports "Not connected" instead of writing to a dead socket.
+        _stream = null;
+        _reader = null;
+        _writer = null;
     }
 
+    /// <summary>
+    /// The game state, or "Unknown" when the server does not answer. A server
+    /// that has just closed or reset the connection (it unloaded: a live
+    /// reload) is noticed here, not thrown: callers ask the state after a
+    /// command, and the command's own result must stand.
+    /// </summary>
     public string GetState()
     {
-        EnsureConnected();
+        if (_writer == null || _reader == null)
+            return "Unknown";
 
-        _writer!.WriteLine("STATE");
-        string? response = _reader!.ReadLine();
+        string? response;
+        try
+        {
+            _writer.WriteLine("STATE");
+            response = _reader.ReadLine();
+        }
+        catch (Exception ex) when (ex is IOException || ex is SocketException || ex is ObjectDisposedException)
+        {
+            Disconnect();
+            return "Unknown";
+        }
 
-        if (response != null && response.StartsWith("STATE:"))
+        if (response == null)
+        {
+            Disconnect();
+            return "Unknown";
+        }
+
+        if (response.StartsWith("STATE:"))
         {
             return response.Substring(6);
         }
@@ -231,13 +258,24 @@ public class ValheimClient : IDisposable
             {
                 line = _reader!.ReadLine();
             }
+            catch (IOException ex) when (!ConnectionLoss.IsReadTimeout(ex))
+            {
+                line = null;
+            }
             catch (IOException)
             {
                 result.Add($"ERROR: code=client_timeout message=no response within {(CommandTimeout + ResponseAllowance).TotalSeconds:F0}s; the command was not resent (it may have executed); check the server is a valheimCLI with command completion");
                 Disconnect();
                 return result;
             }
-            if (line == null) break;
+            if (line == null)
+            {
+                // The server closed the connection before answering: it stopped,
+                // or a live reload replaced it. Never report that as success.
+                result.Add(ConnectionLoss.Line(command));
+                Disconnect();
+                return result;
+            }
 
             // Handle state change notifications
             if (TryHandleStateChange(line))
@@ -250,24 +288,43 @@ public class ValheimClient : IDisposable
                 {
                     for (int i = 0; i < count; i++)
                     {
-                        string? outputLine = _reader.ReadLine();
+                        string? outputLine = _reader!.ReadLine();
                         if (outputLine != null)
                             result.Add(outputLine);
                     }
                 }
                 // Read END_OUTPUT marker
-                _reader.ReadLine();
+                _reader!.ReadLine();
                 break;
             }
         }
         }
         finally
         {
-            if (_stream != null)
-                _stream.ReadTimeout = previousReadTimeout;
+            RestoreReadTimeout(previousReadTimeout);
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Restores the read timeout after a command. The server may have reset the
+    /// connection meanwhile (it unloaded right after answering); the socket
+    /// option then fails (EINVAL on macOS), and the connection is dropped
+    /// instead of failing the command that already has its answer.
+    /// </summary>
+    private void RestoreReadTimeout(int timeout)
+    {
+        if (_stream == null)
+            return;
+        try
+        {
+            _stream.ReadTimeout = timeout;
+        }
+        catch (Exception ex) when (ex is SocketException || ex is IOException || ex is ObjectDisposedException)
+        {
+            Disconnect();
+        }
     }
 
     private bool _warnedNoCompletion;

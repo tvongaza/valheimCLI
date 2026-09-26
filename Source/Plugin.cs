@@ -13,7 +13,7 @@ namespace valheimCLI
     public class valheimCLIPlugin : BaseUnityPlugin
     {
         private const string ModName = "valheimCLI";
-        private const string ModVersion = "1.0.0";
+        internal const string ModVersion = "1.0.0";
         private const string Author = "valheimCLI";
         internal const string ModGUID = Author + "." + ModName;
         private static string ConfigFileName = ModGUID + ".cfg";
@@ -40,7 +40,9 @@ namespace valheimCLI
         public void Awake()
         {
             ManifestCommands.RecordOwnLoad(DateTime.UtcNow);
+            UnloadOtherInstances();
             Instance = this;
+            _loadedUtc = DateTime.UtcNow;
 
             _enabledConfig = Config.Bind("Server", "Enabled", true, "Enable the command server");
             _portConfig = Config.Bind("Server", "Port", 5555, "Port for the command server (localhost only)");
@@ -66,6 +68,7 @@ namespace valheimCLI
             // a name can be taken over by a plugin loading after us, and a name
             // someone else registered first is still ours once we replace it.
             Dictionary<string, object> beforeRegister = SnapshotCommands();
+            List<KeyValuePair<string, Terminal.ConsoleCommand>> before = new(Terminal.commands);
             CustomCommands.Register();
             WorldInspectionCommands.Register();
             TerrainInspectionCommands.Register();
@@ -76,6 +79,7 @@ namespace valheimCLI
             List<object> registeredHere = CliCommandValidity.NewlyRegistered(beforeRegister, SnapshotCommands());
             CliCommandValidity.RecordOwnCommands(registeredHere);
             Log.LogInfo($"Registered {registeredHere.Count} valheimCLI commands");
+            _ownCommands = LiveReload.Registered(before, Terminal.commands);
 
             // Initialize state tracker
             _stateTracker = new GameStateTracker(Log);
@@ -109,6 +113,7 @@ namespace valheimCLI
         private void Start()
         {
             ManifestCommands.StandingProblems();
+            ReloadCommands.RecordLoadedBuild(this, _loadedUtc);
         }
 
         private void Update()
@@ -152,9 +157,9 @@ namespace valheimCLI
                 }
                 finally
                 {
-                    // An async handler (BeginAsync) completes its request itself.
-                    if (!broker.IsAsync(request.Id))
-                        broker.Complete(request.Id);
+                    // An async handler (BeginAsync) completes its request itself,
+                    // possibly already inside the handler.
+                    broker.EndHandler(request.Id);
                     broker.CurrentRequestId = 0;
                 }
             }
@@ -842,9 +847,10 @@ namespace valheimCLI
                         _commandServer?.SendOutput(line);
                     }
                 }
-                else if (_commandServer == null || !_commandServer.Broker.IsAsync(_commandServer.Broker.CurrentRequestId))
+                else if (_commandServer == null || !_commandServer.Broker.BegunAsync(_commandServer.Broker.CurrentRequestId))
                 {
-                    // An async command answers through its handle later; nothing to confirm here.
+                    // An async command answers through its handle (later, or already
+                    // inside its handler); nothing to confirm here.
                     _commandServer?.SendOutput($"Executed: {command}");
                 }
             }
@@ -987,13 +993,61 @@ namespace valheimCLI
             Instance = this;
         }
 
+        /// <summary>
+        /// The newest instance wins. A copy in BepInEx/plugins (chainloader) and
+        /// one in BepInEx/scripts (ScriptEngine) both load when both files are
+        /// there; the older would keep the command port while the newer one's
+        /// commands answer, and every async reply would go to a socket nobody
+        /// reads. Any other live instance with this GUID is destroyed before
+        /// this one patches, registers commands or opens the port. Both loaders
+        /// hide the objects that carry plugins, so the search includes hidden
+        /// objects. Patches still registered under this Harmony id (a build
+        /// without the clean unload below) are removed as well.
+        /// </summary>
+        private void UnloadOtherInstances()
+        {
+            foreach (BaseUnityPlugin other in UnityEngine.Resources.FindObjectsOfTypeAll<BaseUnityPlugin>())
+            {
+                if (other == null || ReferenceEquals(other, this)) continue;
+                BepInPlugin? meta = MetadataHelper.GetMetadata(other);
+                if (meta == null || meta.GUID != ModGUID) continue;
+                Log.LogWarning($"Another {ModName} instance is loaded ({other.GetType().Assembly.GetName().Name}); unloading it: the newest wins");
+                try { DestroyImmediate(other); }
+                catch (Exception ex) { Log.LogError($"Unloading the other {ModName} instance failed: {ex}"); }
+            }
+            Harmony.UnpatchID(ModGUID);
+        }
+
+        /// <summary>
+        /// Leaves nothing of this instance running, so a live reload (the next
+        /// build loads as a separate assembly next to this one) or
+        /// cli_self_unload is clean: the port and its threads, the config
+        /// watcher, the Harmony patches, the console commands this instance
+        /// registered (unless a newer instance has replaced them), the log sources.
+        /// UnpatchSelf removes every patch under this Harmony id; both loaders
+        /// destroy the old instance before the new one patches, so it never
+        /// takes the new instance's patches.
+        /// </summary>
         private void OnDestroy()
         {
             try { CaptureCommands.RestoreAll(); }
             catch (Exception ex) { Log.LogError($"Restoring clutter on unload failed: {ex}"); }
             _commandServer?.Dispose();
+            _commandServer = null;
+            _configWatcher?.Dispose();
+            _configWatcher = null;
+            HarmonyInstance.UnpatchSelf();
+            LiveReload.RemoveOwned(Terminal.commands, _ownCommands);
             Config.Save();
+            if (ReferenceEquals(Instance, this))
+                Instance = null;
+            BepInEx.Logging.Logger.Sources.Remove(Log);
+            BepInEx.Logging.Logger.Sources.Remove(Logger);
         }
+
+        private DateTime _loadedUtc;
+        private List<KeyValuePair<string, Terminal.ConsoleCommand>> _ownCommands = new();
+        private FileSystemWatcher? _configWatcher;
 
         private DateTime _lastReloadTime;
         private const long RELOAD_DELAY = 10000000; // One second
@@ -1055,6 +1109,8 @@ namespace valheimCLI
         }
 
         public bool Abandoned => _broker.IsAbandoned(Id);
+        /// <summary>After Complete: true until the socket thread has taken the response to send.</summary>
+        public bool AwaitingCollection => _broker.IsComplete(Id);
         public void Output(string line) => _broker.Output(Id, line);
         public void Complete() => _broker.Complete(Id);
     }

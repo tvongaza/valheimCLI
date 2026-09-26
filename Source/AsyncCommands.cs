@@ -127,7 +127,7 @@ namespace valheimCLI
         private static bool TryF(string s, out float value) => float.TryParse(s, NumberStyles.Float, Inv, out value);
 
         /// <summary>Open the async request and run the coroutine; typed in the F5 console (no request) it runs anyway and prints there.</summary>
-        private static void Start(string name, Action<string> console, Func<Context, IEnumerator> body, bool gated)
+        internal static void Start(string name, Action<string> console, Func<Context, IEnumerator> body, bool gated)
         {
             AsyncHandle? handle = valheimCLIPlugin.BeginAsync();
             valheimCLIPlugin? plugin = valheimCLIPlugin.Instance;
@@ -150,6 +150,7 @@ namespace valheimCLI
         private static IEnumerator Run(Context ctx, Func<Context, IEnumerator> bodyFactory, bool gated)
         {
             bool owns = false;
+            bool finished = false;
             try
             {
                 if (gated)
@@ -162,6 +163,7 @@ namespace valheimCLI
                         if (ctx.Cancelled || waited.Elapsed.TotalSeconds > 60)
                         {
                             ctx.Output($"ERROR: code=busy message={ctx.Name} waited {waited.ElapsedMilliseconds} ms for {Gate.OwnerName} (request #{Gate.Owner}) and gave up");
+                            finished = true;
                             yield break;
                         }
                         yield return null;
@@ -186,9 +188,14 @@ namespace valheimCLI
                     }
                     yield return current;
                 }
+                finished = true;
             }
             finally
             {
+                // Not finished: the coroutine was stopped from outside, which
+                // happens when the plugin is destroyed (a live reload, cli_self_unload).
+                if (!finished)
+                    ctx.Output(RequestBroker.UnloadedLine);
                 if (owns)
                     Gate.Release(ctx.Id);
                 ctx.Handle?.Complete();

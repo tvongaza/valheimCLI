@@ -109,6 +109,16 @@ but the diagnostics while it does not match. See
 [docs/expectations.md](docs/expectations.md) for the file format, strict mode
 and the world-files hash recipe.
 
+## Live Reload
+
+With BepInEx ScriptEngine installed, a plugin in `BepInEx/scripts` is reloaded
+when its DLL changes. `cli_await_plugin <guid|file.dll> [md5-prefix|-] [timeout]`
+waits until the reload has happened and proves which build loaded;
+`cli_build` says which valheimCLI build answers; valheimCLI unloads cleanly so it
+can be reloaded too. `examples/reload-plugin.sh <Plugin.dll> [guid]` copies a
+build and waits for it. Setup, the reload flow and what a plugin must undo in
+`OnDestroy` to reload cleanly: [docs/live-reload.md](docs/live-reload.md).
+
 ## Readiness And Exit Codes
 
 `--status` prints a compact agent-readable summary:
@@ -161,7 +171,10 @@ Exit codes:
 - `0`: success
 - `1`: command or test failure
 - `2`: timeout
-- `3`: connection failure
+- `3`: connection failure, including a command the server could not finish
+  because it stopped or a live reload replaced valheimCLI
+  (`ERROR: code=unloaded` from the server, or `ERROR: code=connection_closed`
+  when the connection closed first; the command is not resent)
 - `4`: bad input
 - `5`: game not ready
 - `6`: the game does not match an `--expect` file (or a plan's `game.expect` file)
