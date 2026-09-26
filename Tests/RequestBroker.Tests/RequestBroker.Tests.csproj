@@ -19,6 +19,7 @@
     <Compile Include="../../CLI/Testing/CliModels.cs" Link="CLI/CliModels.cs" />
     <Compile Include="../../CLI/Testing/WaitProgress.cs" Link="CLI/WaitProgress.cs" />
     <Compile Include="../../CLI/Testing/CommandRetry.cs" Link="CLI/CommandRetry.cs" />
+    <Compile Include="../../CLI/Testing/SilentReply.cs" Link="CLI/SilentReply.cs" />
   </ItemGroup>
 
   <ItemGroup>

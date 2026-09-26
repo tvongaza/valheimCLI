@@ -310,7 +310,77 @@ public class ValheimClient : IDisposable
 
     public CommandResult ExecuteCommand(string command)
     {
-        return CommandResult.FromOutput(command, SendCommand(command));
+        List<string> output = SendCommand(command);
+        return SilentReply.Judge(command, output, TryListCommandNames, $"{_host}:{_port}")
+               ?? CommandResult.FromOutput(command, output);
+    }
+
+    /// <summary>How long TryListCommandNames waits for the plugin's command list.</summary>
+    public static readonly TimeSpan ListTimeout = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// The console command names the plugin has registered (LIST_COMMANDS, which every plugin build
+    /// answers on its socket thread), or null when it did not list any in time. A list that did not
+    /// arrive whole leaves the connection out of step, so it is closed.
+    /// </summary>
+    public IReadOnlyCollection<string>? TryListCommandNames()
+    {
+        if (_stream == null || _writer == null || _reader == null)
+        {
+            return null;
+        }
+
+        int previous = Timeout.Infinite;
+        try
+        {
+            previous = _stream.ReadTimeout;
+            _stream.ReadTimeout = (int)ListTimeout.TotalMilliseconds;
+            _writer.WriteLine("LIST_COMMANDS");
+            string? header = _reader.ReadLine();
+            while (TryHandleStateChange(header))
+            {
+                header = _reader.ReadLine();
+            }
+
+            if (header == null || !header.StartsWith("COMMANDS:") || !int.TryParse(header.Substring(9), out int count))
+            {
+                Disconnect();
+                return null;
+            }
+
+            HashSet<string> names = new(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < count; i++)
+            {
+                string? line = _reader.ReadLine();
+                if (line == null)
+                {
+                    Disconnect();
+                    return null;
+                }
+
+                int bar = line.IndexOf('|');
+                names.Add(bar < 0 ? line : line[..bar]);
+            }
+
+            _reader.ReadLine(); // END_COMMANDS
+            return names.Count > 0 ? names : null;
+        }
+        catch (Exception ex) when (ex is IOException || ex is ObjectDisposedException || ex is InvalidOperationException)
+        {
+            Disconnect();
+            return null;
+        }
+        finally
+        {
+            try
+            {
+                if (_stream != null)
+                    _stream.ReadTimeout = previous;
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
     }
 
     public bool TryGetConnectionStatus(out string connectionStatus, out string server)

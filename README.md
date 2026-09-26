@@ -95,6 +95,16 @@ OK: SAVE ms=2310 world=TestWorld saveNumber=12 dir=/saves/worlds_local/TestWorld
 
 It applies to single commands, a test plan's commands and the interactive prompt.
 
+A reply in which the game printed nothing is an error, not an empty
+success: a plugin answers every command it ran, at least with
+`Executed: <command>`, but a dedicated server prints nothing for a command
+it does not have. For a `cli_` command whose reply is empty, or only that
+confirmation, the CLI asks the plugin for its registered commands: a name
+the plugin build does not have is `ERROR: code=unknown_command ...`, which
+names the plugin and says to update it. Any other empty reply is
+`ERROR: code=no_output ...`. Both exit 1. This applies to single commands
+and the steps of `join`.
+
 Async helpers replace fixed sleeps in capture scripts with one bounded call
 each; the answer names the condition still pending when a deadline passes:
 
