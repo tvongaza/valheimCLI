@@ -37,6 +37,8 @@ namespace valheimCLI
         private static bool _autoStartQueuedJoinRequested;
         private static readonly FieldInfo? QueuedJoinServerField = typeof(FejdStartup).GetField("m_queuedJoinServer", BindingFlags.Instance | BindingFlags.NonPublic);
 
+        public Extensions.ExtensionRegistry? Extensions { get; private set; }
+
         public void Awake()
         {
             ManifestCommands.RecordOwnLoad(DateTime.UtcNow);
@@ -69,6 +71,9 @@ namespace valheimCLI
             // someone else registered first is still ours once we replace it.
             Dictionary<string, object> beforeRegister = SnapshotCommands();
             List<KeyValuePair<string, Terminal.ConsoleCommand>> before = new(Terminal.commands);
+            Extensions = new valheimCLI.Extensions.ExtensionRegistry(AsyncCommands.Gate, valheimCLI.Extensions.ExtensionHost.Precondition);
+            valheimCLI.Extensions.ExtensionHost.Register(Extensions);
+            valheimCLI.Extensions.WorldObservations.Register(Extensions);
             CustomCommands.Register();
             WorldInspectionCommands.Register();
             TerrainInspectionCommands.Register();
@@ -120,6 +125,7 @@ namespace valheimCLI
         {
             _stateTracker?.Update();
             ProcessPendingCommands();
+            Extensions?.Tick();
             TryQueuePendingServerConnect();
             TryAutoStartQueuedJoin();
         }
@@ -1030,6 +1036,7 @@ namespace valheimCLI
         /// </summary>
         private void OnDestroy()
         {
+            Extensions?.Dispose();
             try { CaptureCommands.RestoreAll(); }
             catch (Exception ex) { Log.LogError($"Restoring clutter on unload failed: {ex}"); }
             _commandServer?.Dispose();
