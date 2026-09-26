@@ -10,12 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- The expectations file format and report lines, shared with the mod. -->
-    <Compile Include="../Source/Expectations.cs" Link="Shared/Expectations.cs" />
+    <Compile Remove="Testing/**/*.cs" />
+    <ProjectReference Include="../Toolkit/Valheim.Cli.Testing/Valheim.Cli.Testing.csproj" />
   </ItemGroup>
-
-  <ItemGroup>
-    <PackageReference Include="YamlDotNet" Version="16.2.1" />
-  </ItemGroup>
-
 </Project>
