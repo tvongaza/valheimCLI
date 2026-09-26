@@ -502,8 +502,9 @@ public class GameLauncher
                     state = client.GetState();
                 }
 
+                bool statusLineRead = client.StatusLineRead;
                 client.TryGetConnectionStatus(out connectionStatus, out server);
-                return new GameStatus
+                GameStatus answered = new GameStatus
                 {
                     IsRunning = GameStatus.RunningFrom(running, connected),
                     ProcessSeenLocally = running,
@@ -513,21 +514,12 @@ public class GameLauncher
                     Host = _host,
                     Port = _port,
                     State = state,
-                    LoadPhase = GetDetail(statusDetails, "phase"),
-                    ShuttingDown = GetBoolDetail(statusDetails, "shuttingDown"),
-                    LocationsGenerated = GetBoolDetail(statusDetails, "locationsGenerated"),
-                    LocationProgress = GetFloatDetail(statusDetails, "locationProgress"),
-                    EstimatedLocationSeconds = GetFloatDetail(statusDetails, "estimatedLocationSeconds"),
-                    LocationCount = GetIntDetail(statusDetails, "locationCount"),
-                    ActiveAreaLoaded = GetBoolDetail(statusDetails, "activeAreaLoaded"),
-                    RespawnWait = GetFloatDetail(statusDetails, "respawnWait"),
-                    Dedicated = GetBoolDetail(statusDetails, "dedicated"),
-                    Listening = GetBoolDetail(statusDetails, "listening"),
-                    PasswordPrompt = GetBoolDetail(statusDetails, "passwordPrompt"),
                     ConnectionStatus = connectionStatus,
                     ConnectedServer = server,
                     PluginLog = pluginLog
                 };
+                ApplyStatusDetails(answered, statusDetails, statusLineRead);
+                return answered;
             }
             catch (Exception ex) when (ex is IOException || ex is System.Net.Sockets.SocketException || ex is ObjectDisposedException || ex is InvalidOperationException)
             {
@@ -558,6 +550,27 @@ public class GameLauncher
             ConnectedServer = server,
             PluginLog = pluginLog
         };
+    }
+
+    /// <summary>
+    /// Copies the plugin's status details into a status. From a STATUS line (fromStatusLine) the
+    /// fields it carried are kept too, so a field the plugin build does not report is told apart
+    /// from one it reports as false; from the state-only fallback nothing is known about them.
+    /// </summary>
+    internal static void ApplyStatusDetails(GameStatus status, Dictionary<string, string> details, bool fromStatusLine)
+    {
+        status.LoadPhase = GetDetail(details, "phase");
+        status.ShuttingDown = GetBoolDetail(details, "shuttingDown");
+        status.LocationsGenerated = GetBoolDetail(details, "locationsGenerated");
+        status.LocationProgress = GetFloatDetail(details, "locationProgress");
+        status.EstimatedLocationSeconds = GetFloatDetail(details, "estimatedLocationSeconds");
+        status.LocationCount = GetIntDetail(details, "locationCount");
+        status.ActiveAreaLoaded = GetBoolDetail(details, "activeAreaLoaded");
+        status.RespawnWait = GetFloatDetail(details, "respawnWait");
+        status.Dedicated = GetBoolDetail(details, "dedicated");
+        status.Listening = GetBoolDetail(details, "listening");
+        status.PasswordPrompt = GetBoolDetail(details, "passwordPrompt");
+        status.ReportedFields = fromStatusLine ? new HashSet<string>(details.Keys, StringComparer.OrdinalIgnoreCase) : null;
     }
 
     private static string GetDetail(Dictionary<string, string> details, string key)
@@ -688,6 +701,20 @@ public class GameStatus
     public bool PasswordPrompt { get; set; }
     public bool WaitTimedOut { get; set; }
     public string WaitTargetName { get; set; } = "";
+
+    /// <summary>
+    /// The fields of the plugin's status line, or null when none was read (the plugin did not answer,
+    /// or answered with its state alone). A field the plugin build does not report reads as false above;
+    /// this tells the two apart.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public HashSet<string>? ReportedFields { get; set; }
+
+    /// <summary>Which of these fields the plugin's status line did not carry; empty when it carried all or none was read.</summary>
+    public List<string> MissingFields(IEnumerable<string> fields)
+    {
+        return ReportedFields == null ? new List<string>() : fields.Where(field => !ReportedFields.Contains(field)).ToList();
+    }
     public PluginLogInfo PluginLog { get; set; } = new();
 
     public bool ProcessReady => IsRunning;

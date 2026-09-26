@@ -298,7 +298,9 @@ class Program
                     inWorld = status.InWorldReady,
                     localPlayer = status.LocalPlayerReady,
                     serverConnected = status.ServerConnected,
-                    serverReady = status.ServerReady
+                    serverReady = status.ServerReady,
+                    // False when the plugin does not report a field server-ready needs (load.missingFields).
+                    serverReadyKnown = WaitStatusFields.Missing(WaitTarget.ServerReady, status).Count == 0
                 },
                 connection = new
                 {
@@ -316,7 +318,8 @@ class Program
                     activeAreaLoaded = status.ActiveAreaLoaded,
                     respawnWait = status.RespawnWait,
                     dedicated = status.Dedicated,
-                    listening = status.Listening
+                    listening = status.Listening,
+                    missingFields = MissingStatusFields(status)
                 },
                 diagnostics = new
                 {
@@ -340,6 +343,7 @@ class Program
         string connectionStatus = string.IsNullOrWhiteSpace(status.ConnectionStatus) ? "none" : status.ConnectionStatus;
         string connectedServer = string.IsNullOrWhiteSpace(status.ConnectedServer) ? "none" : status.ConnectedServer;
 
+        List<string> serverReadyMissing = WaitStatusFields.Missing(WaitTarget.ServerReady, status);
         output.WriteLine($"valheim-cli status ok={ToBool(status.IsConnected)} code={diagnosticCode}");
         output.WriteLine(
             "readiness " +
@@ -350,7 +354,11 @@ class Program
             $"inWorld={ToBool(status.InWorldReady)} " +
             $"localPlayer={ToBool(status.LocalPlayerReady)} " +
             $"serverConnected={ToBool(status.ServerConnected)} " +
-            $"serverReady={ToBool(status.ServerReady)}");
+            $"serverReady={(serverReadyMissing.Count > 0 ? "unknown" : ToBool(status.ServerReady))}");
+        if (serverReadyMissing.Count > 0)
+        {
+            output.WriteLine($"note serverReady unknown (plugin does not report {string.Join(", ", serverReadyMissing)}): the plugin build is older than this client; update the plugin");
+        }
         output.WriteLine(
             "context " +
             $"game={FormatState(status.IsRunning ? "running" : "not_running")} " +
@@ -365,18 +373,31 @@ class Program
         {
             output.WriteLine(
                 "load " +
-                $"locationsGenerated={ToBool(status.LocationsGenerated)} " +
+                $"locationsGenerated={Reported(status, "locationsGenerated", status.LocationsGenerated)} " +
                 $"locationProgress={status.LocationProgress.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)} " +
                 $"estimatedLocationSeconds={status.EstimatedLocationSeconds.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)} " +
                 $"locationCount={status.LocationCount} " +
-                $"activeAreaLoaded={ToBool(status.ActiveAreaLoaded)} " +
+                $"activeAreaLoaded={Reported(status, "activeAreaLoaded", status.ActiveAreaLoaded)} " +
                 $"respawnWait={status.RespawnWait.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)} " +
-                $"dedicated={ToBool(status.Dedicated)} " +
-                $"listening={ToBool(status.Listening)}");
+                $"dedicated={Reported(status, "dedicated", status.Dedicated)} " +
+                $"listening={Reported(status, "listening", status.Listening)}");
         }
         output.WriteLine($"diagnostic {diagnosticCode}: {status.DiagnosticMessage}");
         output.WriteLine($"next {NextStatusAction(status)}");
         output.WriteLine(status.Remote ? "path (remote: this machine's game folder is not read)" : $"path {status.GamePath}");
+    }
+
+    /// <summary>A boolean status field, or "unknown" when the plugin's status line does not carry it.</summary>
+    static string Reported(GameStatus status, string field, bool value)
+    {
+        return status.MissingFields(new[] { field }).Count > 0 ? "unknown" : ToBool(value);
+    }
+
+    /// <summary>The fields --status shows that the plugin's status line does not carry; null (left out) when none.</summary>
+    static List<string>? MissingStatusFields(GameStatus status)
+    {
+        List<string> missing = status.MissingFields(new[] { "shuttingDown", "locationsGenerated", "activeAreaLoaded", "dedicated", "listening" });
+        return missing.Count > 0 ? missing : null;
     }
 
     static string NextStatusAction(GameStatus status)
@@ -384,6 +405,12 @@ class Program
         if (status.ServerConnected)
         {
             return "Client is in-world and connected; run Valheim commands or validation steps.";
+        }
+
+        List<string> serverReadyMissing = WaitStatusFields.Missing(WaitTarget.ServerReady, status);
+        if (serverReadyMissing.Count > 0 && status.State.Equals("InWorldNoPlayer", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"This plugin build does not report {string.Join(", ", serverReadyMissing)}, so whether the server is open for players is unknown; update the valheimCLI plugin to wait --for server-ready.";
         }
 
         if (status.ServerReady)
@@ -928,6 +955,7 @@ class Program
             WaitOutcome.Stalled => $"Stalled waiting for {targetName}: {reason}.",
             WaitOutcome.Unreachable => $"Cannot reach {targetName}: {reason}.",
             WaitOutcome.Lost => $"Lost the game waiting for {targetName}: {reason}.",
+            WaitOutcome.Unsupported => $"Cannot judge {targetName}: {reason}.",
             _ => $"Timed out waiting for {targetName}."
         };
     }

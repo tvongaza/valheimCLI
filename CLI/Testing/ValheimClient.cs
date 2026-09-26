@@ -122,8 +122,16 @@ public class ValheimClient : IDisposable
         return "Unknown";
     }
 
+    /// <summary>
+    /// The last GetStatusDetails read the plugin's STATUS line. False when it fell back to the
+    /// state alone (no STATUS line in time, or a plugin without one): then a field missing from
+    /// the details says nothing about what the plugin reports.
+    /// </summary>
+    public bool StatusLineRead { get; private set; }
+
     public Dictionary<string, string> GetStatusDetails()
     {
+        StatusLineRead = false;
         EnsureConnected();
 
         _writer!.WriteLine("STATUS");
@@ -159,10 +167,11 @@ public class ValheimClient : IDisposable
             };
         }
 
+        StatusLineRead = true;
         return ParseKeyValueStatus(response.Substring("STATUS:".Length));
     }
 
-    private static Dictionary<string, string> ParseKeyValueStatus(string payload)
+    internal static Dictionary<string, string> ParseKeyValueStatus(string payload)
     {
         Dictionary<string, string> result = new(StringComparer.OrdinalIgnoreCase);
         string[] parts = payload.Split(' ', StringSplitOptions.RemoveEmptyEntries);

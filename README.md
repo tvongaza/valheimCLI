@@ -183,18 +183,19 @@ The JSON launch response includes `phases`, `failurePhase`, `errorCode`, and the
 - `server-connected`
 - `server-ready`: a server's world is up for players (its locations exist, it listens for connections, it is not shutting down)
 
-**A dedicated server** has a world but never a local player: its state stays `InWorldNoPlayer`, so `in-world` never comes. Wait for `server-ready`. It is reached on every boot path: a new world after generating its locations (phase `generating_locations`, then `opening_server`), an existing world straight after loading, which writes no generation line to the log. A wait for `main-menu`, `in-world`, `local-player` or `server-connected` on a dedicated server ends at once as unreachable and names `server-ready`. A client hosting a world it opened to other players reaches `server-ready` too. The status reports `dedicated=` and `listening=`, and `--status` a `serverReady` readiness field; a plugin older than this one reports neither, so `server-ready` needs the plugin from this version on the server.
+**A dedicated server** has a world but never a local player: its state stays `InWorldNoPlayer`, so `in-world` never comes. Wait for `server-ready`. It is reached on every boot path: a new world after generating its locations (phase `generating_locations`, then `opening_server`), an existing world straight after loading, which writes no generation line to the log. A wait for `main-menu`, `in-world`, `local-player` or `server-connected` on a dedicated server ends at once as unreachable and names `server-ready`. A client hosting a world it opened to other players reaches `server-ready` too. The status reports `dedicated=` and `listening=`, and `--status` a `serverReady` readiness field; a plugin older than this one reports neither, so `server-ready` needs the plugin from this version on the server. On an older plugin a wait for it ends at once with `ERROR: code=plugin_lacks_field ...` (exit 1), naming the fields the plugin does not report, and `--status` shows `serverReady=unknown` and `unknown` for each such field instead of `false`.
 
 ```bash
 valheim-cli -p 5556 --remote wait --for server-ready --timeout 30m   # a dedicated server through a tunnel
 ```
 
-A wait watches the whole status (process, plugin, state, load phase, location progress, connection) and ends in one of five ways:
+A wait watches the whole status (process, plugin, state, load phase, location progress, connection) and ends in one of six ways:
 
 - **reached**: `OK: reached <target>; ...`, exit 0.
 - **timeout**: `--timeout` passed, `TIMEOUT: waiting for <target>; ...`, exit 2.
 - **stalled**: nothing in the status changed for `--stall` (default 120s; `0` disables), `ERROR: code=stalled ...`, exit 2. A stall is a timeout that came early, so it keeps the timeout's exit code.
 - **unreachable**: the game is in a state from which the target never comes without an action, `ERROR: code=unreachable ...`, exit 5. Waiting for `main-menu` while the game is in a world is the common case: the menu comes only after a logout (`cli_logout_save`) or a disconnect.
+- **plugin lacks a field**: the plugin's status line has no field the target is judged by (a plugin build older than the client), `ERROR: code=plugin_lacks_field ...`, exit 1, at the first status. Only `server-ready` needs such fields (`locationsGenerated`, `listening`, `shuttingDown`); the other targets use the state and connection status every plugin build reports. Update the plugin.
 - **lost**: the game was there during the wait and is gone, exit 7, within about 6 s at the default `--interval` and never after the stall window. `ERROR: code=game_exited ...` when its process was seen on this machine and has exited; `ERROR: code=plugin_lost ...` when its plugin answered earlier in the wait and has stopped answering (a game through a tunnel or a dedicated server, whose process is not visible here, or a game whose process is still quitting).
 
 While it waits, it prints a heartbeat every `--progress` (default 15s; `0` disables) to stderr, so stdout keeps only the result:

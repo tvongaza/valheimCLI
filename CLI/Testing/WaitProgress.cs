@@ -12,7 +12,13 @@ public enum WaitOutcome
     Unreachable,
 
     /// <summary>The game was there during the wait and is gone: it exited, or its plugin stopped answering.</summary>
-    Lost
+    Lost,
+
+    /// <summary>
+    /// The plugin's status line has no field the target is judged by: its build is older than
+    /// this client, so the target can never be seen as reached, however long the wait.
+    /// </summary>
+    Unsupported
 }
 
 /// <summary>
@@ -318,9 +324,44 @@ public sealed class WaitStep
     public WaitOutcome Outcome { get; init; }
     public string Reason { get; init; } = "";
 
-    /// <summary>The errorCode of an ending other than reached: timeout, stalled, unreachable, game_exited or plugin_lost.</summary>
+    /// <summary>The errorCode of an ending other than reached: timeout, stalled, unreachable, game_exited, plugin_lost or plugin_lacks_field.</summary>
     public string ErrorCode { get; init; } = "";
     public WaitHeartbeat? Heartbeat { get; init; }
+}
+
+/// <summary>
+/// The status fields a target is judged by. A plugin build older than the field reports nothing
+/// for it, which the status reads as false: a wait for server-ready on a plugin without listening=
+/// could never be reached and ran into its stall window, which pointed at the game instead of the
+/// plugin. Only fields a target cannot be judged without are listed: state and the connection
+/// status (every plugin build reports them) are not.
+/// </summary>
+public static class WaitStatusFields
+{
+    public const string ErrorCode = "plugin_lacks_field";
+
+    private static readonly string[] None = Array.Empty<string>();
+    private static readonly string[] ServerReady = { "locationsGenerated", "listening", "shuttingDown" };
+
+    public static IReadOnlyList<string> Required(WaitTarget target)
+    {
+        return target == WaitTarget.ServerReady ? ServerReady : None;
+    }
+
+    /// <summary>
+    /// The fields the target needs that the plugin's status line did not carry; empty when every one
+    /// was there, and when no status line was read (the plugin did not answer, or answered too late).
+    /// </summary>
+    public static List<string> Missing(WaitTarget target, GameStatus status)
+    {
+        return status.MissingFields(Required(target));
+    }
+
+    public static string Reason(WaitTarget target, IReadOnlyList<string> missing)
+    {
+        return $"the plugin's status line has no {string.Join(", ", missing)} field ({WaitTargets.ToName(target)} needs " +
+               $"{string.Join(", ", Required(target))}): this valheimCLI plugin build is older than the client; update the plugin";
+    }
 }
 
 public static class WaitReachability
@@ -530,6 +571,14 @@ public sealed class WaitTracker
         Elapsed = at - _start;
         Unchanged = at - _changedAt;
 
+        // Checked before the target: a plugin without a field the target needs can never show it reached
+        // (or, for shuttingDown, could show it reached while the world is closing).
+        List<string> missing = WaitStatusFields.Missing(_target, status);
+        if (missing.Count > 0)
+        {
+            return Ended(WaitOutcome.Unsupported, WaitStatusFields.Reason(_target, missing));
+        }
+
         if (status.Satisfies(_target))
         {
             return new WaitStep { Outcome = WaitOutcome.Reached };
@@ -636,6 +685,7 @@ public sealed class WaitTracker
             WaitOutcome.Stalled => "stalled",
             WaitOutcome.Unreachable => "unreachable",
             WaitOutcome.Lost => "plugin_lost",
+            WaitOutcome.Unsupported => WaitStatusFields.ErrorCode,
             _ => ""
         };
     }
@@ -646,6 +696,7 @@ public sealed class WaitTracker
     /// is the game being in the wrong state for it, which is what 5 (game not ready) means.
     /// A game that went away during the wait has its own code: no state of it is left to
     /// be ready or not, and a script restarts the game rather than retrying the wait.
+    /// A plugin that cannot report the target is a failure no wait or restart mends (1): update the plugin.
     /// </summary>
     public static CliExitCode ExitCode(WaitOutcome outcome)
     {
@@ -654,6 +705,7 @@ public sealed class WaitTracker
             WaitOutcome.Reached => CliExitCode.Success,
             WaitOutcome.Unreachable => CliExitCode.GameNotReady,
             WaitOutcome.Lost => CliExitCode.GameLost,
+            WaitOutcome.Unsupported => CliExitCode.CommandFailure,
             _ => CliExitCode.Timeout
         };
     }
