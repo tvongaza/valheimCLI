@@ -34,6 +34,7 @@ namespace valheimCLI
             // A mismatched build must still be replaceable and identifiable.
             foreach (string name in new[] { "cli_build", "cli_self_unload", "cli_await_plugin" })
                 StandingExpectations.AllowWhileMismatched(name);
+            CallCommands.Register();
 
             new Terminal.ConsoleCommand("cli_create_character", "Create and select a local character: cli_create_character <name> [--replace] [--local] [--skip-intro]. --skip-intro saves it as already spawned once, so it lands at the start without the valkyrie intro", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
             {

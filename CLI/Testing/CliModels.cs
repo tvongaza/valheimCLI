@@ -58,9 +58,18 @@ public sealed class CommandResult
 
     private static string DetectErrorCode(List<string> output)
     {
+        // A command that ends its reply with its own OK: line has said that it
+        // succeeded, and the words below may then be data: a string cli_call
+        // returned, a location or item name. Only its explicit ERROR lines count.
+        bool reportedOk = ReportedOk(output);
         foreach (string line in output)
         {
             string lower = line.ToLowerInvariant();
+            if (reportedOk && !lower.StartsWith("error:") && !lower.StartsWith("error "))
+            {
+                continue;
+            }
+
             if (lower.StartsWith("error: code=" + ConnectionLoss.ErrorCode))
             {
                 return ConnectionLoss.ErrorCode;
@@ -105,6 +114,20 @@ public sealed class CommandResult
         }
 
         return "";
+    }
+
+    private static bool ReportedOk(List<string> output)
+    {
+        for (int i = output.Count - 1; i >= 0; i--)
+        {
+            string line = output[i].Trim();
+            if (line.Length > 0)
+            {
+                return line.StartsWith("OK:", StringComparison.Ordinal);
+            }
+        }
+
+        return false;
     }
 }
 

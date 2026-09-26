@@ -119,6 +119,20 @@ can be reloaded too. `examples/reload-plugin.sh <Plugin.dll> [guid]` copies a
 build and waits for it. Setup, the reload flow and what a plugin must undo in
 `OnDestroy` to reload cleanly: [docs/live-reload.md](docs/live-reload.md).
 
+## Calling Into A Mod
+
+`cli_call` calls a static method, or reads a static field or property, of the
+game or of any loaded mod and prints the result, so a script can ask a mod
+about its state without a console command for each question. It is
+cheat-gated. Resolution, argument syntax and output are described in
+[docs/cli-call.md](docs/cli-call.md); `examples/sample-value.sh` samples one
+member into a CSV time series.
+
+```bash
+valheim-cli cli_call Utils.DistanceXZ 0,0,0 3,100,4
+valheim-cli cli_call --limit 5 MyMod.Diagnostics.PendingJobs
+```
+
 ## Readiness And Exit Codes
 
 `--status` prints a compact agent-readable summary:

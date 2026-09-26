@@ -9,6 +9,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
     <RootNamespace>valheimCLI.Tests</RootNamespace>
+    <!-- CallFixtures has a pointer-parameter method, which cli_call must refuse. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
@@ -35,6 +37,8 @@
     <Compile Include="../../CLI/Testing/ValheimClient.cs" Link="CLI/ValheimClient.cs" />
     <Compile Include="../../CLI/Testing/ConnectionDefaults.cs" Link="CLI/ConnectionDefaults.cs" />
     <Compile Include="../../CLI/Testing/ConnectionLoss.cs" Link="CLI/ConnectionLoss.cs" />
+    <Compile Include="../../Source/StaticMemberCall.cs" Link="Source/StaticMemberCall.cs" />
+    <Compile Include="../../Source/CallValues.cs" Link="Source/CallValues.cs" />
   </ItemGroup>
 
   <ItemGroup>
