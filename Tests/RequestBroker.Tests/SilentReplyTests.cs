@@ -196,4 +196,16 @@ public class SilentReplyTests
             await server;
         }
     }
+
+    [Theory]
+    [InlineData("Unknown command 'cli_save'. Type 'help' to see a list of valid commands")]
+    [InlineData("'cli_save' is not a recognized command. Type 'help' to see a list of valid commands.")]
+    public void AGameThatDoesNotKnowTheCommandIsAnUnknownCommandError(string line)
+    {
+        // Measured: a dedicated server answering a command its plugin build lacks prints the first line,
+        // which used to come back as a success.
+        CommandResult result = CommandResult.FromOutput("cli_save 30", new List<string> { line });
+        Assert.False(result.Ok);
+        Assert.Equal("unknown_command", result.ErrorCode);
+    }
 }

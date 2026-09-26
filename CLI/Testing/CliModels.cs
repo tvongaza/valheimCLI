@@ -71,7 +71,9 @@ public sealed class CommandResult
                 return "bad_input";
             }
 
-            if (lower.Contains("not a recognized command"))
+            // A client's console says "'x' is not a recognized command"; a dedicated server's says
+            // "Unknown command 'x'. Type 'help' ...". Both are a command the game does not have.
+            if (lower.Contains("not a recognized command") || lower.StartsWith("unknown command '"))
             {
                 return "unknown_command";
             }
