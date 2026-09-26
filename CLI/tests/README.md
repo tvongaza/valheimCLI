@@ -83,8 +83,13 @@ command names omit arguments, which may contain credentials; command output and
 verbose console logging may still contain sensitive data and need review before
 sharing.
 
-This is the runner foundation, not full session isolation. The existing game
-launch/`stopAfter` behavior is unchanged: failed runs leave the game open and a
-successful stop can use process-name lookup. Do not use `stopAfter` on a shared
-machine/session. Owned-process fixture management, extension loading and typed
-game observations are separate follow-up work.
+`stopAfter` now stops only the process tree this runner launched. An attached
+local or remote game is left running. Teardown runs after failed/cancelled plans
+as well as successful ones. Set `game.preserveOnFailure: true` to retain a runner-
+owned session for debugging. A launcher that detached from its child cannot prove
+ownership: cleanup reports an error instead of falling back to process names.
+The existing explicit CLI stop command is separate and unchanged.
+
+For reusable C# tests, extension adapters and disposable file fixtures see
+[the testing toolkit guide](../../docs/testing-toolkit.md). Session deployment,
+port reservation and remote station claims remain the caller's responsibility.

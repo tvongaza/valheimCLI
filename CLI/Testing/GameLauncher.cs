@@ -445,6 +445,39 @@ public class GameLauncher
     /// <summary>
     /// Stop the game process gracefully
     /// </summary>
+    /// <summary>For test fixtures: never find/kill a process by name or stop an attached game.</summary>
+    public bool TryStopOwnedGame(out string message)
+    {
+        if (_remote || _gameProcess == null)
+        {
+            message = "No process was launched by this launcher; attached session left untouched.";
+            return false;
+        }
+        try
+        {
+            if (_gameProcess.HasExited)
+            {
+                message = "Launch process exited; cannot prove whether it detached a game. No process-name fallback was used.";
+                return false;
+            }
+            _gameProcess.Kill(entireProcessTree: true);
+            if (!_gameProcess.WaitForExit(5000))
+            {
+                message = "Owned process did not exit within five seconds.";
+                return false;
+            }
+            _gameProcess.Dispose();
+            _gameProcess = null;
+            message = "Stopped only the process tree launched by this runner.";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            message = "Could not stop owned process: " + ex.Message;
+            return false;
+        }
+    }
+
     public void StopGame()
     {
         // A remote game is not ours to stop, and killing by name would stop a local one.

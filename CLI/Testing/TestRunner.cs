@@ -11,6 +11,7 @@ public class TestRunner
     private readonly string _host;
     private readonly int _port;
     private ValheimClient? _client;
+    private bool _ownsGame;
     private Dictionary<string, string> _variables = new();
 
     public TestRunner(GameLauncher launcher, TestRunnerOptions? options = null, string host = ConnectionDefaults.Host, int port = ConnectionDefaults.Port)
@@ -43,6 +44,7 @@ public class TestRunner
         };
 
         bool launchedGame = false;
+        bool stopAfter = false;
         TestPlan? plan = null;
         bool cleanupAllowed = false;
         TimeSpan? originalCommandTimeout = null;
@@ -77,12 +79,12 @@ public class TestRunner
             {
                 planResult.Expectations = PlanExpectations.Unreadable(expectSource, expectError);
                 LogExpectations(planResult.Expectations);
-                return Complete(planResult);
+                throw new PlanNotStartedException();
             }
 
             // Determine launch settings (CLI overrides YAML)
             bool shouldLaunch = _options.Launch ?? plan.Game.Launch;
-            bool shouldStopAfter = _options.StopAfter ?? plan.Game.StopAfter;
+            stopAfter = _options.StopAfter ?? plan.Game.StopAfter;
             TimeSpan launchTimeout = _options.LaunchTimeout ?? plan.Game.GetLaunchTimeoutSpan();
 
             // Handle game launching if configured
@@ -123,7 +125,7 @@ public class TestRunner
                 LogExpectations(planResult.Expectations);
                 if (!planResult.Expectations.Held)
                 {
-                    return Complete(planResult);
+                    throw new PlanNotStartedException();
                 }
             }
 
@@ -159,19 +161,8 @@ public class TestRunner
             // invocation in finally is prevented by RunCleanup's flag.
             await RunCleanupAsync();
 
-            // Handle stop-after if all tests passed
-            if (shouldStopAfter && planResult.Failed == 0 && planResult.Errors == 0)
-            {
-                Log("\nStopping game (all tests passed)...", ConsoleColor.Gray);
-                _client?.Dispose();
-                _client = null;
-                _launcher.StopGame();
-            }
-            else if (shouldStopAfter && (planResult.Failed > 0 || planResult.Errors > 0))
-            {
-                Log("\nKeeping game running for debugging (tests failed)", ConsoleColor.Yellow);
-            }
         }
+        catch (PlanNotStartedException) { /* Expectations are already recorded; finalize only owned resources. */ }
         catch (OperationCanceledException)
         {
             planResult.TestResults.Add(new TestCaseResult
@@ -196,6 +187,28 @@ public class TestRunner
             await RunCleanupAsync();
             if (_client != null && originalCommandTimeout.HasValue)
                 _client.CommandTimeout = originalCommandTimeout.Value;
+            if (stopAfter && _ownsGame)
+            {
+                if (plan?.Game.PreserveOnFailure == true && (planResult.Errors > 0 || planResult.Failed > 0))
+                    Log("Keeping the owned game running: preserveOnFailure=true", ConsoleColor.Yellow);
+                else
+                {
+                    bool stopped = _launcher.TryStopOwnedGame(out string message);
+                    planResult.CleanupResults.Add(new TestCaseResult
+                    {
+                        Name = "Stop owned game", Result = stopped ? TestResult.Passed : TestResult.Error,
+                        Message = message
+                    });
+                    if (stopped)
+                    {
+                        _ownsGame = false;
+                        _client?.Dispose();
+                        _client = null;
+                    }
+                }
+            }
+            else if (stopAfter)
+                Log("Attached game left running: this runner did not launch it.", ConsoleColor.Gray);
         }
 
         return Complete(planResult);
@@ -232,6 +245,8 @@ public class TestRunner
             }
         }
     }
+
+    private sealed class PlanNotStartedException : Exception { }
 
     private TestPlanResult Complete(TestPlanResult planResult)
     {
@@ -292,6 +307,7 @@ public class TestRunner
             return false;
         }
 
+        _ownsGame = true; // Set before waiting: cancellation/startup failure still needs finalization.
         Log($"Waiting for game to be ready (timeout: {timeout.TotalSeconds}s)...", ConsoleColor.Gray);
         bool isReady = await WaitForPluginServerAsync(timeout, cancellationToken);
 

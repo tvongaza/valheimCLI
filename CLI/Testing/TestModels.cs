@@ -116,6 +116,9 @@ public class GameSettings
     [YamlMember(Alias = "expectStrict")]
     public bool ExpectStrict { get; set; } = false;
 
+    [YamlMember(Alias = "preserveOnFailure")]
+    public bool PreserveOnFailure { get; set; }
+
     public TimeSpan GetLaunchTimeoutSpan()
     {
         return TestSettings.ParseDuration(LaunchTimeout);
