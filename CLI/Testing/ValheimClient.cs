@@ -373,6 +373,7 @@ public class ValheimClient : IDisposable
         {
             Disconnect();
         }
+    }
 
     private List<string> ProtocolError(List<string> output, string reason)
     {

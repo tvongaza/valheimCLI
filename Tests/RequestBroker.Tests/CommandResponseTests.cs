@@ -76,7 +76,10 @@ public class CommandResponseTests
         {
             CommandResult result = client.ExecuteCommand("probe");
             Assert.False(result.Ok);
-            Assert.Contains(result.Output, line => line.StartsWith("ERROR: code=protocol_error"));
+            // Closed before any response is connection_closed (a stop or a live reload);
+            // a broken frame after the response began is protocol_error.
+            string code = frame.Length == 0 ? "ERROR: code=connection_closed" : "ERROR: code=protocol_error";
+            Assert.Contains(result.Output, line => line.StartsWith(code));
             Assert.False(client.IsConnected);
             // Never reuse a stream whose next line may belong to the previous response.
             Assert.Throws<InvalidOperationException>(() => client.SendCommand("must not run"));

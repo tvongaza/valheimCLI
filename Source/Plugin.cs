@@ -1052,9 +1052,6 @@ namespace valheimCLI
         private DateTime _lastReloadTime;
         private const long RELOAD_DELAY = 10000000; // One second
 
-        // Held in a field: a watcher only a local refers to can be collected,
-        // and then it stops raising events.
-        private FileSystemWatcher? _configWatcher;
 
         /// <summary>
         /// Reloads the config some time after its file changes. Best effort:
