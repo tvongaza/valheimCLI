@@ -19,7 +19,7 @@ Run local tests first and commit. Then:
 python3 scripts/package-integration.py --output /absolute/new/candidate-directory
 ```
 
-This creates a portable framework-dependent CLI (`dotnet cli/valheim-cli.dll`, .NET 9+), the net48 plugin, three preview NuGet packages, license, source archive, build manifest and SHA256SUMS. It does not deploy or publish. Game/Unity/BepInEx/Roads assemblies and station configs are excluded. Source SDK requirements differ from runtime requirements: our local unit harness currently targets .NET 10.
+This creates a portable framework-dependent CLI (`dotnet cli/valheim-cli.dll`, targets .NET 9 and permits newer major runtimes; tested on .NET 10), the net48 plugin, three preview NuGet packages, license, source archive, build manifest and SHA256SUMS. It does not deploy or publish. Game/Unity/BepInEx/Roads assemblies and station configs are excluded. Source SDK requirements differ from runtime requirements: our local unit harness currently targets .NET 10.
 
 The candidate is explicitly labelled **local-candidate-game-validation-pending**. Do not promote it based only on a successful package build. The in-game plugin preserves its current BepInEx identity for replacement; do not co-install upstream and fork copies. Release version and source hash distinguish the candidate; install pins must use the actual deployed file hashes, not the version string alone.
 
