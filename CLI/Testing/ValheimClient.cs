@@ -104,6 +104,9 @@ public class ValheimClient : IDisposable
         _writer?.Dispose();
         _stream?.Dispose();
         _client?.Close();
+        _reader = null;
+        _writer = null;
+        _stream = null;
         _client = null;
         // Dropped so a caller's finally does not touch a disposed stream and the
         // next call reports "Not connected" instead of writing to a dead socket.
@@ -286,54 +289,63 @@ public class ValheimClient : IDisposable
         _stream.ReadTimeout = (int)Math.Min(int.MaxValue, (CommandTimeout + ResponseAllowance).TotalMilliseconds);
         try
         {
-        // May receive state change notifications before the response
-        while (true)
-        {
-            string? line;
-            try
+            // May receive state change notifications before the response.
+            while (true)
             {
-                line = _reader!.ReadLine();
-            }
-            catch (IOException ex) when (!ConnectionLoss.IsReadTimeout(ex))
-            {
-                line = null;
-            }
-            catch (IOException)
-            {
-                result.Add($"ERROR: code=client_timeout message=no response within {(CommandTimeout + ResponseAllowance).TotalSeconds:F0}s; the command was not resent (it may have executed); check the server is a valheimCLI with command completion");
-                Disconnect();
-                return result;
-            }
-            if (line == null)
-            {
-                // The server closed the connection before answering: it stopped,
-                // or a live reload replaced it. Never report that as success.
-                result.Add(ConnectionLoss.Line(command));
-                Disconnect();
-                return result;
-            }
-
-            // Handle state change notifications
-            if (TryHandleStateChange(line))
-                continue;
-
-            // Handle command output
-            if (line.StartsWith("OUTPUT:"))
-            {
-                if (int.TryParse(line.Substring(7), out int count))
+                string? line;
+                try
                 {
+                    line = _reader!.ReadLine();
+                }
+                catch (IOException ex) when (!ConnectionLoss.IsReadTimeout(ex))
+                {
+                    line = null;
+                }
+                catch (IOException)
+                {
+                    result.Add($"ERROR: code=client_timeout message=no response within {(CommandTimeout + ResponseAllowance).TotalSeconds:F0}s; the command was not resent (it may have executed); check the server is a valheimCLI with command completion");
+                    Disconnect();
+                    return result;
+                }
+                if (line == null)
+                {
+                    // The server closed the connection before answering: it stopped,
+                    // or a live reload replaced it. Never report that as success.
+                    result.Add(ConnectionLoss.Line(command));
+                    Disconnect();
+                    return result;
+                }
+
+                if (TryHandleStateChange(line))
+                    continue;
+
+                if (line.StartsWith("OUTPUT:"))
+                {
+                    if (!int.TryParse(line.Substring(7), System.Globalization.NumberStyles.None,
+                            System.Globalization.CultureInfo.InvariantCulture, out int count))
+                        return ProtocolError(result, "invalid OUTPUT line count");
+
                     for (int i = 0; i < count; i++)
                     {
-                        string? outputLine = _reader!.ReadLine();
-                        if (outputLine != null)
-                            result.Add(outputLine);
+                        string? outputLine = _reader.ReadLine();
+                        if (outputLine == null)
+                            return ProtocolError(result, "connection closed inside the command response");
+                        result.Add(outputLine);
                     }
+
+                    // A multiline entry from an older server can put real
+                    // output here. Never silently consume it as the terminator.
+                    if (_reader.ReadLine() != "END_OUTPUT")
+                        return ProtocolError(result, "expected END_OUTPUT after the declared line count");
+                    break;
                 }
-                // Read END_OUTPUT marker
-                _reader!.ReadLine();
-                break;
             }
         }
+        catch (IOException)
+        {
+            result.Add("ERROR: code=response_io_error message=Could not read the complete command response (connection failure or timeout); the command was not resent and may have executed.");
+            Disconnect();
+            return result;
         }
         finally
         {
@@ -361,6 +373,12 @@ public class ValheimClient : IDisposable
         {
             Disconnect();
         }
+
+    private List<string> ProtocolError(List<string> output, string reason)
+    {
+        output.Add($"ERROR: code=protocol_error message={reason}; disconnected, command not resent (it may have executed)");
+        Disconnect();
+        return output;
     }
 
     private bool _warnedNoCompletion;

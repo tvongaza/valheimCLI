@@ -15,6 +15,10 @@
 
   <ItemGroup>
     <Compile Include="../../Source/RequestBroker.cs" Link="Source/RequestBroker.cs" />
+    <Compile Include="../../Source/CommandResponse.cs" Link="Source/CommandResponse.cs" />
+    <Compile Include="../../CLI/Testing/ValheimClient.cs" Link="CLI/ValheimClient.cs" />
+    <Compile Include="../../CLI/Testing/ConnectionDefaults.cs" Link="CLI/ConnectionDefaults.cs" />
+    <Compile Include="../../CLI/Testing/CliModels.cs" Link="CLI/CliModels.cs" />
     <Compile Include="../../Source/OperationGate.cs" Link="Source/OperationGate.cs" />
     <Compile Include="../../Source/CliCommandValidity.cs" Link="Source/CliCommandValidity.cs" />
     <Compile Include="../../Source/TerrainEditRequest.cs" Link="Source/TerrainEditRequest.cs" />
@@ -29,13 +33,10 @@
     <Compile Include="../../Source/SceneInspection.cs" Link="Source/SceneInspection.cs" />
     <Compile Include="../../CLI/Testing/CommandInfo.cs" Link="CLI/CommandInfo.cs" />
     <Compile Include="../../CLI/Testing/CommandMetadata.cs" Link="CLI/CommandMetadata.cs" />
-    <Compile Include="../../CLI/Testing/CliModels.cs" Link="CLI/CliModels.cs" />
     <Compile Include="../../Source/Expectations.cs" Link="Source/Expectations.cs" />
     <Compile Include="../../CLI/Testing/TestModels.cs" Link="CLI/TestModels.cs" />
     <Compile Include="../../CLI/Testing/PlanExpectations.cs" Link="CLI/PlanExpectations.cs" />
     <Compile Include="../../Source/LiveReload.cs" Link="Source/LiveReload.cs" />
-    <Compile Include="../../CLI/Testing/ValheimClient.cs" Link="CLI/ValheimClient.cs" />
-    <Compile Include="../../CLI/Testing/ConnectionDefaults.cs" Link="CLI/ConnectionDefaults.cs" />
     <Compile Include="../../CLI/Testing/ConnectionLoss.cs" Link="CLI/ConnectionLoss.cs" />
     <Compile Include="../../Source/StaticMemberCall.cs" Link="Source/StaticMemberCall.cs" />
     <Compile Include="../../Source/CallValues.cs" Link="Source/CallValues.cs" />
@@ -44,6 +45,8 @@
     <Compile Include="../../CLI/Testing/WaitProgress.cs" Link="CLI/WaitProgress.cs" />
     <Compile Include="../../CLI/Testing/CommandRetry.cs" Link="CLI/CommandRetry.cs" />
     <Compile Include="../../CLI/Testing/SilentReply.cs" Link="CLI/SilentReply.cs" />
+    <Compile Include="../../Source/WorldFixturePolicy.cs" Link="Source/WorldFixturePolicy.cs" />
+    <Compile Include="../../Source/WorldDumpGrid.cs" Link="Source/WorldDumpGrid.cs" />
   </ItemGroup>
 
   <ItemGroup>

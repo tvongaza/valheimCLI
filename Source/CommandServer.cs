@@ -283,9 +283,7 @@ namespace valheimCLI
                                 int colon = rest.IndexOf(':');
                                 if (colon <= 0 || !double.TryParse(rest.Substring(0, colon), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out timeoutSeconds))
                                 {
-                                    writer.WriteLine("OUTPUT:1");
-                                    writer.WriteLine("ERROR: code=bad_request message=expected CMDT:<seconds>:<command>");
-                                    writer.WriteLine("END_OUTPUT");
+                                    CommandResponse.Write(writer, new[] { "ERROR: code=bad_request message=expected CMDT:<seconds>:<command>" });
                                     continue;
                                 }
                                 command = rest.Substring(colon + 1).Trim();
@@ -303,12 +301,7 @@ namespace valheimCLI
                             if (!response.Completed)
                                 _logger.LogWarning($"CLI command #{request.Id} timed out after {timeoutSeconds:F0}s: {command}");
 
-                            writer.WriteLine($"OUTPUT:{response.Lines.Count}");
-                            foreach (string outputLine in response.Lines)
-                            {
-                                writer.WriteLine(outputLine);
-                            }
-                            writer.WriteLine("END_OUTPUT");
+                            CommandResponse.Write(writer, response.Lines);
                         }
                     }
                     catch (IOException)
