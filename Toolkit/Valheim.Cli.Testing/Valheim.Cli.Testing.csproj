@@ -1,12 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net9.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
-    <Version>0.1.0-preview.1</Version><PackageLicenseFile>LICENSE</PackageLicenseFile><Description>The shared Valheim CLI client and test-plan runner. No game assemblies.</Description>
+    <Version>0.1.0-preview.1</Version><PackageLicenseFile>LICENSE</PackageLicenseFile><PackageReadmeFile>README.md</PackageReadmeFile><Description>The shared Valheim CLI client and test-plan runner. No game assemblies.</Description>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../CLI/Testing/*.cs" Link="Testing/%(Filename)%(Extension)" />
     <Compile Include="../../Source/Expectations.cs" Link="Shared/Expectations.cs" />
     <PackageReference Include="YamlDotNet" Version="16.2.1" />
   </ItemGroup>
-  <ItemGroup><None Include="../../LICENSE" Pack="true" PackagePath="" /></ItemGroup>
+  <ItemGroup><None Include="../../LICENSE" Pack="true" PackagePath="" /><None Include="../../docs/testing-toolkit.md" Pack="true" PackagePath="README.md" /></ItemGroup>
 </Project>
