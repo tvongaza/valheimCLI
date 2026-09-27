@@ -132,7 +132,7 @@ expectations and reports every residual. See `examples/TerrainCheck` for a
 read-only game check and `examples/NoGameTerrain` for a package-only, no-game
 example with hand-derived plane expectations and explicit unknown replay data.
 Neither a replay of its own capture nor a synthetic plane alone establishes
-Valheim terrain conversion or client physics. That paired system gate remains.
+Valheim terrain conversion or client physics. The declared server calibration and native-input client gate below now cover those specific boundaries.
 
 The package examples accept `-p:ToolkitPackageVersion=0.1.0-preview.2` instead of
 project references. Copy just an example directory outside this repository, add
@@ -151,3 +151,31 @@ influenced samples. This is the small system-test cap validating the broader
 local test layer. It does not establish natural generator fidelity, paint or
 Roads-absent client replication; the temporary platform is not sent to a client.
 No new shared package or production-mod dependency was required.
+
+## Native terrain replicated to a CLI-only client (preview 3)
+
+The Roads-owned persistent fixture now captures native pre-write vertices, writes
+real saved compiler deltas, and derives expected results independently from a
+small declared road profile. `SurfaceProbe` and `examples/ClientSurfaceCheck`
+compare loaded heightmap vertices and **their own** mesh colliders separately.
+They also require three stationary, grounded local-player observations; correct
+position alone, flying, an attachment or an active teleport is insufficient.
+
+On Valheim 1.0.16 a client with only CLI loaded (Roads/MWL pinned absent) matched
+all 15 unique samples exactly, before and after a confirmed save/server restart/
+rejoin. A deliberately unchanged-ground expectation failed 8 samples. The earlier
+100-sample server calibration and no-write control remain a separate test.
+This is a bounded replication/support gate, not paint, arbitrary generator
+fidelity, network routing, walking usability, or an MWL port gameplay test.
+
+Preview 3 adds the surface assertions and keeps packages version-aligned. Toolkit
+63 tests, CLI 792 tests, Roads scenarios 58 tests and MWL adapter 35 tests cover
+the local layers; Roads real-source tests pass 766/766 on both .NET 10 and Mono.
+The optional adapters and shared toolkit stay outside ordinary mod releases.
+
+Important game boundary: the game's achievement/cheat confirmation can refuse
+`cli_arrive` even after devcommands is enabled. The transport can still return
+that console text as a completed request. Require the command's documented result
+or observe its effect independently; do not treat transport completion as a
+successful mutation. This campaign used an authorized server peer teleport and
+client-owned arrival/support observations, without granting client admin rights.

@@ -2,7 +2,7 @@
 
 Adapted from ProceduralRoads.Tests/SyntheticWorld.cs at 865120b0ed3f9543a8c3e33b46f136a6c37ab9ac. Kept separately from the game; this is synthetic input, not Valheim terrain generation.
 
-Repository license reproduced below. Confirm test-source licensing with its contributors before public packaging.
+Repository MIT license reproduced below; preserve this notice when redistributing the adapted source.
 
 ﻿Copyright 2023 Azumatt/Tykea
 

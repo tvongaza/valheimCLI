@@ -1,0 +1,39 @@
+{
+  "asOf": "2026-09-27",
+  "integrationBase": "976519092a0ca51abb39b0926b87326b6f0eae06",
+  "upstreamPRs": [
+    {
+      "url": "https://github.com/jneb802/valheimCLI/pull/29",
+      "headCommit": "9b88d7d77e5ce690e702a6b6ca4ccbe0b04303e8"
+    },
+    {
+      "url": "https://github.com/jneb802/valheimCLI/pull/30",
+      "headCommit": "62d32ae897e6672fde3eeb17537b915cfdd9b636"
+    },
+    {
+      "url": "https://github.com/jneb802/valheimCLI/pull/31",
+      "headCommit": "2b97cf281dfc5d1237da808fe467d48718b412e3"
+    },
+    {
+      "url": "https://github.com/jneb802/valheimCLI/pull/32",
+      "headCommit": "3e06752b4158767b0ee0fd6ee177c03d80f10b34"
+    },
+    {
+      "url": "https://github.com/jneb802/valheimCLI/pull/33",
+      "headCommit": "c39ff935c4136520d9a9dfde54939b25de31358e"
+    },
+    {
+      "url": "https://github.com/jneb802/valheimCLI/pull/34",
+      "headCommit": "1210ab3902f8623f43a862f181a7fddf8f792388"
+    },
+    {
+      "url": "https://github.com/jneb802/valheimCLI/pull/35",
+      "headCommit": "65c87318677538370e5be7b85c0b8bc022799b9d"
+    },
+    {
+      "url": "https://github.com/jneb802/valheimCLI/pull/37",
+      "headCommit": "976519092a0ca51abb39b0926b87326b6f0eae06"
+    }
+  ],
+  "note": "#37 combines #29-35. These commits are inputs, not a claim that owner PRs merged. Testing additions follow the integration base."
+}

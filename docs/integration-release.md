@@ -21,7 +21,7 @@ python3 scripts/package-integration.py --output /absolute/new/candidate-director
 
 This creates a portable framework-dependent CLI (`dotnet cli/valheim-cli.dll`, targets .NET 9 and permits newer major runtimes; tested on .NET 10), the net48 plugin, three preview NuGet packages, license, source archive, build manifest and SHA256SUMS. It does not deploy or publish. Game/Unity/BepInEx/Roads assemblies and station configs are excluded. Source SDK requirements differ from runtime requirements: our local unit harness currently targets .NET 10.
 
-The candidate is explicitly labelled **local-candidate-game-validation-pending**. Do not promote it based only on a successful package build. The in-game plugin preserves its current BepInEx identity for replacement; do not co-install upstream and fork copies. Release version and source hash distinguish the candidate; install pins must use the actual deployed file hashes, not the version string alone.
+The candidate is explicitly labelled **local-candidate-not-published**. Do not promote it based only on a successful package build. The in-game plugin preserves its current BepInEx identity for replacement; do not co-install upstream and fork copies. Release version and source hash distinguish the candidate; install pins must use the actual deployed file hashes, not the version string alone.
 
 ## Release gate
 
@@ -34,4 +34,26 @@ The candidate is explicitly labelled **local-candidate-game-validation-pending**
 - Review outgoing artifact contents and PR mapping; add release notes, dependency versions, rollback instructions and known limitations.
 - Create owner PRs, then publish a clearly labelled integration prerelease to the fork. Do not wait for merge after validation. Attach every created PR to this task.
 
-No public release or owner PR has been created by this implementation yet. This is deliberate until the remaining terrain/client boundary gate and publication review are complete. Extension reload and Roads dedicated persistence have separate recorded passes.
+No public release or owner PR has been created by this implementation yet. This is deliberate pending publication review; the bounded terrain/client boundary gate is complete. Extension reload and Roads dedicated persistence have separate recorded passes.
+
+
+## Preview 3 readiness
+
+The native-input Roads client gate passed with the mod absent, including save,
+server restart and rejoin. Exact sample results and limits are summarized in
+`testing-toolkit.md`; private saves, account data and station scripts are not
+release artifacts. MWL port scenarios have local assertion tests and an adapter
+lifecycle check, but no full-mode port gameplay acceptance. Keep that scope clear
+in an MWL adoption draft rather than describing it as completed port testing.
+
+`integration-inputs.json` pins owner PR #37 and its component PR heads as of the
+readiness review. Packaging verifies that each is an ancestor of the candidate.
+All three package versions must agree, including dependency versions; mismatches
+are refused before output is created. The optional mod projects and all three
+examples support pinned-package builds without sibling source checkouts.
+
+For rollback, stop the test game, remove optional adapters first, and restore the
+previous **single** CLI DLL and CLI executable together. These libraries don't
+migrate production world data; scenarios act only on explicit disposable copies.
+Preserve failed-run evidence until its owned process has stopped. Installing an
+older CLI while leaving an adapter requiring API v1 installed is not supported.

@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework><LangVersion>10</LangVersion><Nullable>enable</Nullable>
-    <Version>0.1.0-preview.2</Version><PackageLicenseFile>LICENSE</PackageLicenseFile><PackageReadmeFile>README.md</PackageReadmeFile><Description>Deterministic terrain inputs and replay fixtures for Valheim mod tests. No Unity dependency.</Description>
+    <Version>0.1.0-preview.3</Version><PackageLicenseFile>LICENSE</PackageLicenseFile><PackageReadmeFile>README.md</PackageReadmeFile><Description>Deterministic terrain inputs and replay fixtures for Valheim mod tests. No Unity dependency.</Description>
   </PropertyGroup>
   <ItemGroup><None Include="THIRD-PARTY-NOTICES.md" Pack="true" PackagePath="" /></ItemGroup>
   <ItemGroup><None Include="../../LICENSE" Pack="true" PackagePath="" /><None Include="../../docs/testing-toolkit.md" Pack="true" PackagePath="README.md" /></ItemGroup>
