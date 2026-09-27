@@ -35,6 +35,7 @@ def main():
     for name in ('Valheim.Cli.Testing', 'Valheim.Testing', 'Valheim.Testing.Game'):
         run('dotnet', 'pack', f'Toolkit/{name}/{name}.csproj', '-c', 'Release', '--no-restore', '-m:1', f'-p:PackageVersion={args.version}', '-o', str(dest / 'packages'))
     shutil.copy2(ROOT / 'LICENSE', dest / 'LICENSE')
+    shutil.copy2(ROOT / 'THIRD-PARTY-NOTICES.txt', dest / 'THIRD-PARTY-NOTICES.txt')
     shutil.copy2(ROOT / 'docs/integration-release.md', dest / 'RELEASE-GATES.md')
     shutil.copy2(ROOT / 'docs/testing-toolkit.md', dest / 'TESTING.md')
     run('git', 'archive', '--format=tar', '-o', str(dest / 'source.tar'), commit)
