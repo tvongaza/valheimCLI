@@ -1,6 +1,6 @@
 # Valheim testing toolkit preview
 
-Assistant-written implementation notes. Preview prototype. The Roads dedicated save/restart and bridge-respawn pilot passed its bounded Valheim checks on 27 September. The shared lifecycle also passed empty-save on the dedicated server and rejected the archived broken Roads build at the reload assertion. Terrain comparison additions are locally tested; paired terrain/client collision remains pending.
+Assistant-written implementation notes. Preview prototype. The Roads dedicated save/restart and bridge-respawn pilot passed its bounded Valheim checks on 27 September. The shared lifecycle also passed empty-save on the dedicated server and rejected the archived broken Roads build at the reload assertion. The Roads-owned declared terrain fixture now passes all 100 height and server-collider samples in Valheim 1.0.16; omitting its writer fails 48 samples. Persistent natural-input terrain and client collision remain pending.
 
 ## Test pyramid
 
@@ -140,3 +140,14 @@ the packaged `packages/` directory as a NuGet source alongside nuget.org (for
 YamlDotNet), restore and run/build with that property. No game, Unity, BepInEx or
 Roads assemblies belong in these NuGet packages. They are external test-driver
 libraries; do not install them as game plugins.
+
+## First paired terrain fixture
+
+Roads now owns a two-zone declared-platform fixture under its optional test
+adapter and system runner. The same analytic expectations exercise its real
+writer with minimal doubles and the actual game compiler/heightmap/collider.
+All 100 samples matched in game; the no-write control failed exactly the 48
+influenced samples. This is the small system-test cap validating the broader
+local test layer. It does not establish natural generator fidelity, paint or
+Roads-absent client replication; the temporary platform is not sent to a client.
+No new shared package or production-mod dependency was required.
