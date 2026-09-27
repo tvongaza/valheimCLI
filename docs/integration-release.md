@@ -57,3 +57,7 @@ previous **single** CLI DLL and CLI executable together. These libraries don't
 migrate production world data; scenarios act only on explicit disposable copies.
 Preserve failed-run evidence until its owned process has stopped. Installing an
 older CLI while leaving an adapter requiring API v1 installed is not supported.
+
+## Repository split (preview 4)
+
+ValheimTesting now owns the reusable terrain, fixtures, assertions, lifecycle and external examples. This repository packages only `Valheim.Cli.Testing`, plus the CLI executable/plugin. Earlier preview 3 three-package artifacts remain historical evidence; do not use that ownership model for new releases. The separate library consumes a pinned CLI package from this fork until upstream lands.

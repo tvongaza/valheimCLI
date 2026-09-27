@@ -1,5 +1,0 @@
-<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><OutputType>Exe</OutputType><RollForward>Major</RollForward><TargetFramework>net9.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
-  <ItemGroup Condition="'$(ToolkitPackageVersion)' == ''"><ProjectReference Include="../../Toolkit/Valheim.Testing.Game/Valheim.Testing.Game.csproj" /></ItemGroup>
-  <ItemGroup Condition="'$(ToolkitPackageVersion)' != ''"><PackageReference Include="Valheim.Testing.Game" Version="$(ToolkitPackageVersion)" /></ItemGroup>
-</Project>

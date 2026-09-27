@@ -11,7 +11,7 @@ def output(*args):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--output', required=True, type=pathlib.Path)
-    parser.add_argument('--version', default='0.1.0-preview.3')
+    parser.add_argument('--version', default='0.1.0-preview.4')
     args = parser.parse_args()
     if not re.fullmatch(r'\d+\.\d+\.\d+-preview\.\d+', args.version):
         parser.error('Use an explicit preview version.')
@@ -20,7 +20,7 @@ def main():
     inputs = json.loads((ROOT / 'docs/integration-inputs.json').read_text())
     for item in inputs['upstreamPRs']:
         run('git', 'merge-base', '--is-ancestor', item['headCommit'], 'HEAD')
-    for name in ('Valheim.Cli.Testing', 'Valheim.Testing', 'Valheim.Testing.Game'):
+    for name in ('Valheim.Cli.Testing',):
         project = (ROOT / f'Toolkit/{name}/{name}.csproj').read_text()
         if f'<Version>{args.version}</Version>' not in project:
             parser.error('Package version must match all project dependency versions; update and commit them first.')
@@ -32,7 +32,7 @@ def main():
     (dest / 'plugin').mkdir()
     shutil.copy2(ROOT / 'bin/Release/valheimCLI.dll', dest / 'plugin/valheimCLI.dll')
     run('dotnet', 'publish', 'CLI/valheim-cli.csproj', '-c', 'Release', '--no-restore', '-m:1', '-p:UseAppHost=false', '-o', str(dest / 'cli'))
-    for name in ('Valheim.Cli.Testing', 'Valheim.Testing', 'Valheim.Testing.Game'):
+    for name in ('Valheim.Cli.Testing',):
         run('dotnet', 'pack', f'Toolkit/{name}/{name}.csproj', '-c', 'Release', '--no-restore', '-m:1', f'-p:PackageVersion={args.version}', '-o', str(dest / 'packages'))
     shutil.copy2(ROOT / 'LICENSE', dest / 'LICENSE')
     shutil.copy2(ROOT / 'THIRD-PARTY-NOTICES.txt', dest / 'THIRD-PARTY-NOTICES.txt')
