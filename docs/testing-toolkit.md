@@ -1,6 +1,6 @@
 # Valheim testing toolkit preview
 
-Assistant-written implementation notes. Preview prototype. The Roads dedicated save/restart and bridge-respawn pilot passed its bounded Valheim checks on 27 September. Shared-lifecycle extraction and terrain comparison additions are locally tested; paired terrain/client collision remains pending.
+Assistant-written implementation notes. Preview prototype. The Roads dedicated save/restart and bridge-respawn pilot passed its bounded Valheim checks on 27 September. The shared lifecycle also passed empty-save on the dedicated server and rejected the archived broken Roads build at the reload assertion. Terrain comparison additions are locally tested; paired terrain/client collision remains pending.
 
 ## Test pyramid
 
@@ -119,8 +119,10 @@ refuses to start a replacement after failed cleanup. Per-boot logs preserve prio
 startup evidence. It does not own accounts, station locks or external processes.
 
 The previous Roads-local implementation passed dedicated-server checks. The
-extraction preserves its behavior with fast lifecycle/scenario tests and a second
-mod owner fixture; do not present this as a new in-game run of the extracted DLL.
+extraction is covered by fast lifecycle/scenario tests and a second mod owner
+fixture. Its dedicated empty-save repeat passes on the fixed Roads build and fails
+after reload on the archived broken build. The earlier bridge pass was on the
+Roads-local lifecycle; it was not rerun after extraction.
 
 ## Terrain checks and clean package examples
 
