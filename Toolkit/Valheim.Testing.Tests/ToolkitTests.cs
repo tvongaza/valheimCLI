@@ -62,6 +62,15 @@ public class ToolkitTests
         File.WriteAllText(Path.Combine(copy, "world.db"), "edited"); fixture.Dispose(); Assert.False(Directory.Exists(copy)); Assert.Equal("original", File.ReadAllText(file));
         using var kept = WorldFixture.Copy(dirs.Source, dirs.Output, hashes); kept.Preserve = true; kept.Dispose(); Assert.True(Directory.Exists(kept.DirectoryPath));
     }
+    [Fact] public void RuntimeCopyPreservesEmptyDirectories()
+    {
+        using var dirs = new Directories();
+        Directory.CreateDirectory(Path.Combine(dirs.Source, "BepInEx", "scripts"));
+        string file = Path.Combine(dirs.Source, "server.exe"); File.WriteAllText(file, "fixture");
+        using var copy = WorldFixture.Copy(dirs.Source, dirs.Output, new Dictionary<string, string> { ["server.exe"] = WorldFixture.Hash(file) });
+        Assert.True(Directory.Exists(Path.Combine(copy.DirectoryPath, "BepInEx", "scripts")));
+        Assert.Empty(Directory.GetFileSystemEntries(Path.Combine(copy.DirectoryPath, "BepInEx", "scripts")));
+    }
     [Fact] public void UnpinnedActorCannotIssueCommands()
     {
         using var actor = new GameActor("server", new Fake()); Assert.Throws<InvalidOperationException>(() => actor.Execute("road_generate"));
