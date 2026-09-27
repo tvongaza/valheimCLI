@@ -1,6 +1,6 @@
 # Valheim testing toolkit preview
 
-Assistant-written implementation notes. Local prototype; the new adapter and automated scenarios still require their bounded Valheim checks.
+Assistant-written implementation notes. Preview prototype. The Roads dedicated save/restart and bridge-respawn pilot passed its bounded Valheim checks on 27 September. Shared-lifecycle extraction and terrain comparison additions are locally tested; paired terrain/client collision remains pending.
 
 ## Test pyramid
 
@@ -99,3 +99,42 @@ Client-side follow-up: run an opted-in joined-client mutation and its refused
 controls in a disposable fixture. Server Devcommands is a user-suggested reference
 for enabling client devcommands if that check exposes a missing game-level step.
 No dependency on that mod or general admin-command bypass has been added.
+
+
+## Shared owned-session lifecycle (preview 2)
+
+`Valheim.Testing.Game` now owns `OwnedServerSession`, `DirectServerProcess` and
+`RecordingTransport`. Roads consumes these types instead of copying them. Other
+mods provide their own namespaced session capability, for example
+`other.mod.tests/session`; the shared package has no Roads dependency.
+
+The launch callback receives a fresh unpredictable token for every boot. Pass it
+to your prepared child process, and have your adapter report the exact token,
+PID, actual save root, `dedicated` and `complete`, under source
+`owned-test-session`. The session requires a valid extension result envelope from
+the configured owner, verifies process/save identity, then strict environment
+pins. Define `complete` to include your mod's readiness. It retries bounded
+readiness observations, not mutations. Stop/restart owns only that process and
+refuses to start a replacement after failed cleanup. Per-boot logs preserve prior
+startup evidence. It does not own accounts, station locks or external processes.
+
+The previous Roads-local implementation passed dedicated-server checks. The
+extraction preserves its behavior with fast lifecycle/scenario tests and a second
+mod owner fixture; do not present this as a new in-game run of the extracted DLL.
+
+## Terrain checks and clean package examples
+
+`TerrainProbe` validates coordinate identity, metres, completeness and explicit
+generator versus loaded-ground layers. It compares up to 256 declared independent
+expectations and reports every residual. See `examples/TerrainCheck` for a
+read-only game check and `examples/NoGameTerrain` for a package-only, no-game
+example with hand-derived plane expectations and explicit unknown replay data.
+Neither a replay of its own capture nor a synthetic plane alone establishes
+Valheim terrain conversion or client physics. That paired system gate remains.
+
+The package examples accept `-p:ToolkitPackageVersion=0.1.0-preview.2` instead of
+project references. Copy just an example directory outside this repository, add
+the packaged `packages/` directory as a NuGet source alongside nuget.org (for
+YamlDotNet), restore and run/build with that property. No game, Unity, BepInEx or
+Roads assemblies belong in these NuGet packages. They are external test-driver
+libraries; do not install them as game plugins.

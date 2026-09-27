@@ -29,9 +29,9 @@ The candidate is explicitly labelled **local-candidate-game-validation-pending**
 - CLI executable and plugin compile; optional adapters compile against actual game references.
 - Small game gate in `testing-toolkit.md` complete, with real loaded-build pins and cleanup evidence.
 - Fresh install of published packages/examples, no dependency on private absolute paths.
-- Cross-platform external CLI smoke; Windows launcher ownership is still unsupported until a specific owned launcher is implemented/tested. Attaching to an existing Windows dedicated server is supported by the transport.
+- Cross-platform external CLI smoke; The Roads-local owned Windows dedicated launcher passed both persistence scenarios; its shared-library extraction is locally tested and awaits a repeat with the packaged binary. Client launch/account ownership remains outside this pilot. Attaching to a prepared game is supported by the transport.
 - Confirm source and dependency licenses/notices; the CLI is MIT and the extracted Roads fixture has its source notice preserved.
 - Review outgoing artifact contents and PR mapping; add release notes, dependency versions, rollback instructions and known limitations.
 - Create owner PRs, then publish a clearly labelled integration prerelease to the fork. Do not wait for merge after validation. Attach every created PR to this task.
 
-No public release or owner PR has been created by this implementation yet. This is deliberate until the new game binding is measured and the toolkit packaging boundary is reviewed.
+No public release or owner PR has been created by this implementation yet. This is deliberate until the remaining terrain/client boundary gate and publication review are complete. Extension reload and Roads dedicated persistence have separate recorded passes.

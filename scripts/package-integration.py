@@ -11,7 +11,7 @@ def output(*args):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--output', required=True, type=pathlib.Path)
-    parser.add_argument('--version', default='0.1.0-preview.1')
+    parser.add_argument('--version', default='0.1.0-preview.2')
     args = parser.parse_args()
     if not re.fullmatch(r'\d+\.\d+\.\d+-preview\.\d+', args.version):
         parser.error('Use an explicit preview version.')
