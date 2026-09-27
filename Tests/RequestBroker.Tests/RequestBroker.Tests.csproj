@@ -19,6 +19,7 @@
     <Compile Include="../../CLI/Testing/ValheimClient.cs" Link="CLI/ValheimClient.cs" />
     <Compile Include="../../CLI/Testing/ConnectionDefaults.cs" Link="CLI/ConnectionDefaults.cs" />
     <Compile Include="../../CLI/Testing/CliModels.cs" Link="CLI/CliModels.cs" />
+    <Compile Include="../../Source/Extensions/ExtensionAccess.cs" Link="Source/ExtensionAccess.cs" />
     <Compile Include="../../Source/Extensions/ExtensionRegistry.cs" Link="Source/ExtensionRegistry.cs" />
     <Compile Include="../../Source/Extensions/ExtensionJson.cs" Link="Source/ExtensionJson.cs" />
     <Compile Include="../../Source/OperationGate.cs" Link="Source/OperationGate.cs" />

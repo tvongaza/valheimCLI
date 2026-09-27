@@ -4,21 +4,15 @@ using System.Linq;
 
 namespace valheimCLI.Extensions
 {
-    internal static class ExtensionHost
+    public static class ExtensionHost
     {
         internal static string? Precondition(ExtensionCommand command)
         {
-            bool server = ZNet.instance != null && ZNet.instance.IsServer();
-            if (command.NeedsWorld && (ZoneSystem.instance == null || ZDOMan.instance == null)) return "A loaded world is required.";
-            if (command.Role == ExtensionRole.Server && !server) return "Server role required.";
-            if (command.Role == ExtensionRole.Client && (ZNet.instance == null || server && ZNet.instance.IsDedicated())) return "Client role required.";
-            if (!command.ReadOnly)
-            {
-                if (Console.instance == null || !Console.instance.IsCheatsEnabled()) return "Enable devcommands for mutating extension commands.";
-                if (ZNet.instance != null && !server && !ClientCommandAccess.AllowOnServerClients)
-                    return "Client mutation requires AllowOnServerClients on this test client.";
-            }
-            return null;
+            ZNet? net = ZNet.instance;
+            // IsCheatsEnabled() includes IsServer(), so it can never admit an opted-in joined client.
+            return ExtensionAccess.Refusal(command, ZoneSystem.instance != null && ZDOMan.instance != null,
+                net != null, net != null && net.IsServer(), net != null && net.IsDedicated(),
+                Console.instance != null, Terminal.m_cheat, ClientCommandAccess.AllowOnServerClients);
         }
         internal static void Register(ExtensionRegistry registry)
         {
@@ -41,19 +35,28 @@ namespace valheimCLI.Extensions
             new Terminal.ConsoleCommand("cli_extension", "Run <extension-id/command> [arguments]", args =>
             {
                 if (args.Length < 2) { args.Context.AddString("ERROR: code=usage message=cli_extension <extension-id/command> [arguments]"); return; }
-                AsyncHandle? handle = valheimCLIPlugin.BeginAsync();
-                if (handle == null) { args.Context.AddString("ERROR: code=transport_required message=Use the CLI connection."); return; }
                 string[] arguments = Enumerable.Range(2, args.Length - 2).Select(i => args[i]).ToArray();
-                registry.Begin(args[1], arguments, handle.Id, () => handle.Abandoned, result =>
+                Execute(registry, args[1], arguments, args.Context.AddString);
+            });
+        }
+
+        /// <summary>Compatibility commands use the same dispatch, cancellation and permissions as cli_extension.</summary>
+        public static void Execute(ExtensionRegistry registry, string path, string[] arguments, Action<string> output)
+        {
+            AsyncHandle? handle = valheimCLIPlugin.BeginAsync();
+            if (handle == null) { output("ERROR: code=transport_required message=Use the CLI connection."); return; }
+            registry.Begin(path, arguments, handle.Id, () => handle.Abandoned, result =>
+            {
+                try
                 {
-                    try
-                    {
-                        handle.Output("EXTENSION_RESULT " + ExtensionJson.Result(result));
-                        handle.Output(result.Ok ? "OK: EXTENSION" : "ERROR: code=" + result.Code + " message=Extension failed; see structured result.");
-                    }
-                    catch (Exception) { handle.Output("ERROR: code=result_serialization message=Extension returned unsupported or excessive data."); }
-                    finally { handle.Complete(); }
-                });
+                    handle.Output("EXTENSION_RESULT " + ExtensionJson.Result(result));
+                    // Adapters can retain established console output during a migration.
+                    if (result.Ok && result.Data.TryGetValue("legacyLines", out object? lines) && lines is string[] text)
+                        foreach (string line in text) handle.Output(line);
+                    handle.Output(result.Ok ? "OK: EXTENSION" : "ERROR: code=" + result.Code + " message=Extension failed; see structured result.");
+                }
+                catch (Exception) { handle.Output("ERROR: code=result_serialization message=Extension returned unsupported or excessive data."); }
+                finally { handle.Complete(); }
             });
         }
     }

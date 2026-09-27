@@ -73,3 +73,29 @@ A `GameActor` wraps the existing transport; it never owns/stops the attached pro
 - One matched-input replay/game boundary-road case and one Roads-absent instrumented-client observation: actual height, area readiness and collision. Preserve unknown/missing observations as incomplete. Use ordinary vanilla terrain for server-only acceptance.
 
 Do not expand this into a full-world matrix per commit. These checks gate the preview release and relevant engine/adapter changes, not every local test iteration.
+
+## Mod-owned adapters and compatibility commands
+
+MWL port/shipment probes now belong to `MoreWorldLocations.TestAdapter` in MWL's
+repository, with external assertions in `MoreWorldLocations.SystemTests`. The CLI
+core no longer registers `cli_mwl_*` commands or resolves MWL types. Install the
+optional adapter to retain those command names. An older core that still owns
+the names is refused by the adapter rather than silently overwritten.
+
+An adapter may register compatibility console commands calling
+`ExtensionHost.Execute(registry, path, arguments, output)`. This is the same
+dispatcher as `cli_extension`; it does not bypass role, world, devcommands, client
+opt-in, cancellation or the mutation gate. The adapter must remove only its own
+command instances when disposed. Successful results can include a bounded
+`legacyLines` string array to retain established output alongside structured JSON.
+
+Extension mutation checks read the raw devcommands flag. Valheim's
+`IsCheatsEnabled()` also requires being the server, and would otherwise reject
+every opted-in joined client. Ten pure policy tests cover the distinction and
+ensure the opt-in cannot waive world or role restrictions. This does not expand
+the waiver for ordinary console commands owned by other plugins.
+
+Client-side follow-up: run an opted-in joined-client mutation and its refused
+controls in a disposable fixture. Server Devcommands is a user-suggested reference
+for enabling client devcommands if that check exposes a missing game-level step.
+No dependency on that mod or general admin-command bypass has been added.
