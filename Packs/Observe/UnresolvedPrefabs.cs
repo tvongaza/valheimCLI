@@ -36,7 +36,7 @@ namespace valheimCLI.Observe
         /// reference position. It replies <see cref="Observe"/>'s data.
         /// </summary>
         public static ExtensionCommand Command(string name = "unresolved-prefabs") =>
-            new ExtensionCommand(name, "List prefab hashes near the player that this process cannot resolve: [radius]", Run, readOnly: true, needsWorld: true);
+            new ExtensionCommand(name, "List prefab hashes near the player that this process cannot resolve: [radius]", Run, readOnly: true, role: ExtensionRole.Client, needsWorld: true);
 
         internal static IEnumerator Run(ExtensionContext context)
         {

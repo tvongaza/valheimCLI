@@ -13,7 +13,8 @@ namespace valheimCLI.Observe
     /// instances stand in it (distant ones included, and those not marked distant, which keep its terrain loaded), and how
     /// many saved objects of known prefabs this client holds for it and how many of those have no instance. With it, the
     /// zone of the client's reference position and its synced simulation distance, from which the runner computes how far
-    /// the player must go. Read-only on a server or client.
+    /// the player must go. Read-only on a server or client. A dedicated server has no local player at a site,
+    /// so its areaReady value is not a usable readiness gate for that site.
     /// </summary>
     public static class ZonePresence
     {
@@ -49,7 +50,7 @@ namespace valheimCLI.Observe
 
         /// <summary>
         /// The reading as extension result data: <c>{source, complete, reference: {x, z}, simulation: {near, far, classic},
-        /// zones: [{x, z, terrainLoaded, instances, nearInstances, saved, withoutInstance}]}</c>. Incomplete without a
+        /// areaReadyAvailable, zones: [{x, z, terrainLoaded, instances, nearInstances, saved, withoutInstance}]}</c>. Incomplete without a
         /// loaded world. Instances are counted where they stand, as the game does when it decides whether a zone's terrain
         /// can go (<c>ZNetScene.HaveInstanceInSector</c>).
         /// </summary>
@@ -97,6 +98,7 @@ namespace valheimCLI.Observe
             return new Dictionary<string, object?>
             {
                 ["source"] = Source, ["complete"] = true,
+                ["areaReadyAvailable"] = Player.m_localPlayer != null,
                 ["reference"] = new Dictionary<string, object?> { ["x"] = (int)reference.x, ["z"] = (int)reference.y },
                 ["simulation"] = new Dictionary<string, object?> { ["near"] = range.NearSimulationDistance, ["far"] = range.FarSimulationDistance, ["classic"] = range.IsClassic },
                 ["zones"] = rows,

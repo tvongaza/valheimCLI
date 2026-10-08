@@ -32,7 +32,11 @@ with the same core build when a test needs zone and area readiness, content or
 Harmony censuses, saved rooms, unresolved prefabs, live config, player custom
 data, global keys, or a bounded visual review. `zones <x,z> ...` accepts zone
 coordinates on a server or client and reports `areaReady` alongside loaded
-terrain and saved-object counts. A test runner must pin the pack DLL and verify
+terrain and saved-object counts. A dedicated server has no local player at a
+site, so its `areaReadyAvailable` is false and its `areaReady` field must not
+be used as a site-readiness gate. Wait for readiness on a joined client instead.
+`unresolved-prefabs` likewise needs a joined client and refuses a dedicated
+server. A test runner must pin the pack DLL and verify
 the capability before issuing commands. Review commands alter only the owned
 client’s temporary visual state and restore it on pack unload.
 

@@ -36,9 +36,14 @@ namespace valheimCLI.Observe
 
         private static Snapshot? _active;
         private static string? _lastRestored;
+        private static string? _lastLost;
 
         /// <summary>Whether a visual capture still owns this client's review-state lease.</summary>
-        public static bool Owns(string id) => _active != null && _active.Id == id;
+        public static bool Owns(string id)
+        {
+            if (_active != null && WorldChanged(_active)) { _lastLost = _active.Id; _active = null; }
+            return _active != null && _active.Id == id;
+        }
 
         /// <summary>Read the client's starting visual and safety state: <c>review-begin &lt;run-id&gt;</c>.</summary>
         public static ExtensionCommand BeginCommand(string name = "review-begin") =>
@@ -63,6 +68,9 @@ namespace valheimCLI.Observe
         internal static IEnumerator Begin(ExtensionContext context)
         {
             if (!Id(context, out var id)) yield break;
+            // A world transition destroys the objects the old lease could restore. Retire it so a rejoined client
+            // can begin a new capture; report the loss when the old id is explicitly restored below.
+            if (_active != null && WorldChanged(_active)) { _lastLost = _active.Id; _active = null; }
             if (_active != null)
             {
                 if (_active.Id != id) context.Fail("busy", "another review capture owns this client's state");
@@ -100,10 +108,18 @@ namespace valheimCLI.Observe
             if (_active == null)
             {
                 if (_lastRestored == id) context.Succeed(new Dictionary<string, object?> { ["source"] = "review-state", ["complete"] = true, ["id"] = id, ["state"] = "restored" });
+                else if (_lastLost == id) context.Fail("world_changed", "the review's world changed; its old state could not be restored and its lease was released");
                 else context.Fail("not_owned", "no matching review snapshot remains");
                 yield break;
             }
             if (_active.Id != id) { context.Fail("not_owned", "another review snapshot owns the client"); yield break; }
+            if (WorldChanged(_active))
+            {
+                _lastLost = id;
+                _active = null;
+                context.Fail("world_changed", "the review's player, environment or camera changed; its old state cannot be restored and its lease was released");
+                yield break;
+            }
             try
             {
                 RestoreNow(_active);
@@ -111,7 +127,12 @@ namespace valheimCLI.Observe
                 _lastRestored = id;
                 context.Succeed(new Dictionary<string, object?> { ["source"] = "review-state", ["complete"] = true, ["id"] = id, ["state"] = "restored" });
             }
-            catch (Exception error) { context.Fail("restore_failed", error.Message); }
+            catch (Exception error)
+            {
+                _lastLost = id;
+                _active = null;
+                context.Fail("restore_failed", error.Message + "; restoration may be incomplete, but the review lease was released");
+            }
         }
 
         internal static IEnumerator MistOff(ExtensionContext context)
@@ -158,7 +179,7 @@ namespace valheimCLI.Observe
 
         private static void RestoreNow(Snapshot snapshot)
         {
-            if (Player.m_localPlayer != snapshot.Player || EnvMan.instance != snapshot.Environment || GameCamera.instance != snapshot.Camera)
+            if (WorldChanged(snapshot))
                 throw new InvalidOperationException("the player, world environment or camera changed during review");
             if (Members.Field<bool>(snapshot.Camera, "m_freeFly")) snapshot.Camera.ToggleFreeFly();
             if (snapshot.Player.InDebugFlyMode() != snapshot.Fly) snapshot.Player.ToggleDebugFly();
@@ -182,6 +203,9 @@ namespace valheimCLI.Observe
             }
             // A newly loaded mist volume was never changed by the capture and keeps its own state.
         }
+
+        private static bool WorldChanged(Snapshot snapshot) =>
+            Player.m_localPlayer != snapshot.Player || EnvMan.instance != snapshot.Environment || GameCamera.instance != snapshot.Camera;
 
         private static bool Id(ExtensionContext context, out string id)
         {
