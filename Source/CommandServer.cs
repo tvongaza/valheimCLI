@@ -19,6 +19,7 @@ namespace valheimCLI
         private Thread? _listenerThread;
         private volatile bool _running;
         private readonly RequestBroker _broker = new();
+        private MainThreadHeartbeat? _heartbeat;
         /// <summary>Legacy CMD: requests wait this long; CMDT:&lt;seconds&gt;: sets its own.</summary>
         public const double DefaultTimeoutSeconds = 30;
         private readonly List<TcpClient> _clients = new();
@@ -40,6 +41,8 @@ namespace valheimCLI
             _stateTracker = tracker;
             _stateTracker.OnStateChanged += OnGameStateChanged;
         }
+
+        public void SetHeartbeat(MainThreadHeartbeat heartbeat) => _heartbeat = heartbeat ?? throw new ArgumentNullException(nameof(heartbeat));
 
         private void OnGameStateChanged(GameState previousState, GameState newState)
         {
@@ -227,6 +230,7 @@ namespace valheimCLI
                             string currentStatus = _stateTracker != null
                                 ? _stateTracker.CurrentStatusLine
                                 : "state=Unknown phase=unknown";
+                            if (_heartbeat != null) currentStatus += " " + _heartbeat.StatusFields(_broker);
                             writer.WriteLine($"STATUS:{currentStatus}");
                             continue;
                         }

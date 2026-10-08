@@ -244,6 +244,8 @@ The JSON launch response includes `phases`, `failurePhase`, `errorCode`, and the
 valheim-cli -p 5556 --remote wait --for server-ready --timeout 30m   # a dedicated server through a tunnel
 ```
 
+The plugin answers raw `STATUS` on its network thread, even while the game thread is busy. Alongside its existing fields it reports `mainThreadIdleMs` (milliseconds since the last plugin frame, or `-1` before the first frame), `queued` (requests whose callers still wait), `running` (the game-thread command ID or `none`) and `runningMs`. An optional `busy` note and `busyMs` say why a mod knowingly holds the game thread. The note is percent-encoded as one status token; decode it after parsing key/value fields. A mod can call `valheimCLIPlugin.SetBusy("generating roads 12/26 islands")` before long work and `ClearBusy()` in a `finally` block. `STATUS` cannot infer the cause of a stall without a note, and queued game commands still cannot run until the frame resumes. A caller should use these fields to distinguish a busy process from a dead one, with its own bounded deadline; `PING` alone proves only that the socket thread answers.
+
 A wait watches the whole status (process, plugin, state, load phase, location progress, connection) and ends in one of six ways:
 
 - **reached**: `OK: reached <target>; ...`, exit 0.

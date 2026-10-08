@@ -23,6 +23,7 @@ namespace valheimCLI
         public static readonly ManualLogSource Log = BepInEx.Logging.Logger.CreateLogSource(ModName);
 
         private CommandServer? _commandServer;
+        private readonly MainThreadHeartbeat _heartbeat = new();
         private GameStateTracker? _stateTracker;
         private ConfigEntry<int>? _portConfig;
         private ConfigEntry<bool>? _enabledConfig;
@@ -84,6 +85,7 @@ namespace valheimCLI
             {
                 _commandServer = new CommandServer(Log, _portConfig.Value);
                 _commandServer.SetStateTracker(_stateTracker);
+                _commandServer.SetHeartbeat(_heartbeat);
                 _commandServer.Start();
             }
 
@@ -114,11 +116,18 @@ namespace valheimCLI
 
         private void Update()
         {
+            _heartbeat.Stamp();
             _stateTracker?.Update();
             ProcessPendingCommands();
             Extensions?.Tick();
             Modules?.Tick();
         }
+
+        /// <summary>Publish a bounded reason before intentionally blocking the game thread; STATUS reports it off-thread.</summary>
+        public static void SetBusy(string reason) => (Instance ?? throw new InvalidOperationException("ValheimCLI is not loaded."))._heartbeat.SetBusy(reason);
+
+        /// <summary>Remove the reason once the long game-thread operation finishes.</summary>
+        public static void ClearBusy() => Instance?._heartbeat.ClearBusy();
 
         private void ProcessPendingCommands()
         {

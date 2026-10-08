@@ -16,6 +16,7 @@
   <ItemGroup>
     <Compile Include="../../Packs/WorldTools/TerrainGridCapture.cs" Link="Source/TerrainGridCapture.cs" />
     <Compile Include="../../Packs/Observe/ResultBudget.cs" Link="Source/ResultBudget.cs" />
+    <Compile Include="../../Source/MainThreadHeartbeat.cs" Link="Source/MainThreadHeartbeat.cs" />
     <Compile Include="../../Source/AccessSnapshot.cs" Link="Source/AccessSnapshot.cs" />
     <Compile Include="../../Source/RequestBroker.cs" Link="Source/RequestBroker.cs" />
     <Compile Include="../../Source/PeerConnection.cs" Link="Source/PeerConnection.cs" />
