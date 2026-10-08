@@ -44,6 +44,7 @@
     <Compile Include="../../Packs/WorldTools/PlayerSupportPolicy.cs" Link="Source/PlayerSupportPolicy.cs" />
     <Compile Include="../../Packs/WorldTools/SceneInspection.cs" Link="Source/SceneInspection.cs" />
     <Compile Include="../../CLI/Testing/CommandInfo.cs" Link="CLI/CommandInfo.cs" />
+    <Compile Include="../../CLI/Testing/CliBuildManifest.cs" Link="CLI/CliBuildManifest.cs" />
     <Compile Include="../../CLI/Testing/CommandMetadata.cs" Link="CLI/CommandMetadata.cs" />
     <Compile Include="../../Source/Expectations.cs" Link="Source/Expectations.cs" />
     <Compile Include="../../CLI/Testing/TestModels.cs" Link="CLI/TestModels.cs" />
@@ -67,6 +68,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../ManifestFixture/ManifestFixture.csproj" Aliases="FixtureAssembly" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.10.0" />
     <PackageReference Include="xunit" Version="2.8.1" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.1" />
