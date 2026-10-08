@@ -20,7 +20,7 @@ namespace valheimCLI.Observe
             return keys;
         }
 
-        private static IEnumerator ListKeys(ExtensionContext context)
+        internal static IEnumerator ListKeys(ExtensionContext context)
         {
             if (context.Arguments.Count != 0) { context.Fail("usage", "takes no arguments"); yield break; }
             context.Succeed(new Dictionary<string, object?>

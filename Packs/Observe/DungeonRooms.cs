@@ -37,7 +37,7 @@ namespace valheimCLI.Observe
         public static ExtensionCommand Command(string name = "dungeon-rooms") =>
             new ExtensionCommand(name, "Read saved dungeon rooms near a position: <x> <z> [radius]", Run, readOnly: true, role: ExtensionRole.Server, needsWorld: true);
 
-        private static IEnumerator Run(ExtensionContext context)
+        internal static IEnumerator Run(ExtensionContext context)
         {
             var arguments = context.Arguments;
             float x = 0f, z = 0f, radius = 64f;

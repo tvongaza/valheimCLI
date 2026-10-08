@@ -60,7 +60,7 @@ namespace valheimCLI.Observe
             new ExtensionCommand(name, "Hide ground clutter for this review capture and remember each entry: <run-id>", ClutterOff,
                 role: ExtensionRole.Client, needsWorld: true);
 
-        private static IEnumerator Begin(ExtensionContext context)
+        internal static IEnumerator Begin(ExtensionContext context)
         {
             if (!Id(context, out var id)) yield break;
             if (_active != null)
@@ -94,7 +94,7 @@ namespace valheimCLI.Observe
             context.Succeed(Describe(_active, "begun"));
         }
 
-        private static IEnumerator Restore(ExtensionContext context)
+        internal static IEnumerator Restore(ExtensionContext context)
         {
             if (!Id(context, out var id)) yield break;
             if (_active == null)
@@ -114,7 +114,7 @@ namespace valheimCLI.Observe
             catch (Exception error) { context.Fail("restore_failed", error.Message); }
         }
 
-        private static IEnumerator MistOff(ExtensionContext context)
+        internal static IEnumerator MistOff(ExtensionContext context)
         {
             if (!Id(context, out var id)) yield break;
             if (_active == null || _active.Id != id) { context.Fail("not_owned", "begin this review before changing mist"); yield break; }
@@ -128,7 +128,7 @@ namespace valheimCLI.Observe
                 ["id"] = id, ["state"] = "mist-off", ["volumes"] = volumes.Length });
         }
 
-        private static IEnumerator ClutterOff(ExtensionContext context)
+        internal static IEnumerator ClutterOff(ExtensionContext context)
         {
             if (!Id(context, out var id)) yield break;
             if (_active == null || _active.Id != id) { context.Fail("not_owned", "begin this review before changing clutter"); yield break; }

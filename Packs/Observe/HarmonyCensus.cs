@@ -31,7 +31,7 @@ namespace valheimCLI.Observe
         public static ExtensionCommand Command(string name = "harmony") =>
             new ExtensionCommand(name, "List applied Harmony patches: [owner]", Run, readOnly: true);
 
-        private static IEnumerator Run(ExtensionContext context)
+        internal static IEnumerator Run(ExtensionContext context)
         {
             if (context.Arguments.Count > 1) { context.Fail("usage", "harmony [owner]"); yield break; }
             context.Succeed(Observe(context.Arguments.Count == 1 ? context.Arguments[0] : null));

@@ -27,7 +27,7 @@ namespace valheimCLI.Observe
         public static ExtensionCommand Command(string name = "config") =>
             new ExtensionCommand(name, "Read a plugin's live config entry: <guid> <section> <key>, percent-encoded", Run, readOnly: true);
 
-        private static IEnumerator Run(ExtensionContext context)
+        internal static IEnumerator Run(ExtensionContext context)
         {
             if (context.Arguments.Count != 3) { context.Fail("usage", "config <guid> <section> <key> (percent-encoded)"); yield break; }
             context.Succeed(Observe(Uri.UnescapeDataString(context.Arguments[0]), Uri.UnescapeDataString(context.Arguments[1]), Uri.UnescapeDataString(context.Arguments[2])));

@@ -38,7 +38,7 @@ namespace valheimCLI.Observe
         public static ExtensionCommand Command(string name = "unresolved-prefabs") =>
             new ExtensionCommand(name, "List prefab hashes near the player that this process cannot resolve: [radius]", Run, readOnly: true, needsWorld: true);
 
-        private static IEnumerator Run(ExtensionContext context)
+        internal static IEnumerator Run(ExtensionContext context)
         {
             float radius = 64f;
             if (context.Arguments.Count > 1 || (context.Arguments.Count == 1 &&

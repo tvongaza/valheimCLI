@@ -26,7 +26,7 @@ namespace valheimCLI.Observe
             new ExtensionCommand(name, "Report zone and area readiness: <x,z> [<x,z> ...] (zone coordinates)", Run,
                 readOnly: true, needsWorld: true);
 
-        private static IEnumerator Run(ExtensionContext context)
+        internal static IEnumerator Run(ExtensionContext context)
         {
             var zones = new List<Vector2s>();
             foreach (string argument in context.Arguments)

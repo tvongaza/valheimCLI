@@ -26,7 +26,7 @@ namespace valheimCLI.Observe
             new ExtensionCommand(name, "Read the local player's custom data and its profile: [key-prefix]", Run,
                 readOnly: true, role: ExtensionRole.Client, needsWorld: true);
 
-        private static IEnumerator Run(ExtensionContext context)
+        internal static IEnumerator Run(ExtensionContext context)
         {
             if (context.Arguments.Count > 1) { context.Fail("usage", "custom-data [key-prefix]"); yield break; }
             context.Succeed(Observe(context.Arguments.Count == 1 ? context.Arguments[0] : null));

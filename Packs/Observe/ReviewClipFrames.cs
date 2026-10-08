@@ -29,7 +29,7 @@ namespace valheimCLI.Observe
             "Render bounded world-only PNG frames: <review-id> <new-absolute-directory> <width> <height> <fps> <frames>",
             Capture, role: ExtensionRole.Client, needsWorld: true);
 
-        private static IEnumerator Capture(ExtensionContext context)
+        internal static IEnumerator Capture(ExtensionContext context)
         {
             if (context.Arguments.Count != 6 || !Id(context.Arguments[0]) ||
                 !int.TryParse(context.Arguments[2], NumberStyles.None, CultureInfo.InvariantCulture, out int width) ||

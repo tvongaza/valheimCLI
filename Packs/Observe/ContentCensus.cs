@@ -53,7 +53,7 @@ namespace valheimCLI.Observe
             new ExtensionCommand(name, "List registered items, recipes, pieces, status effects and prefabs whose names start with a prefix: <owner-guid> <prefix> [<prefix> ...]",
                 Run, readOnly: true, needsWorld: true);
 
-        private static IEnumerator Run(ExtensionContext context)
+        internal static IEnumerator Run(ExtensionContext context)
         {
             var arguments = context.Arguments;
             if (arguments.Count < 2 || arguments.Count > MaxPrefixes + 1 || arguments.Any(string.IsNullOrEmpty))
