@@ -29,7 +29,10 @@ namespace valheimCLI.Observe
         internal static IEnumerator Run(ExtensionContext context)
         {
             if (context.Arguments.Count > 1) { context.Fail("usage", "custom-data [key-prefix]"); yield break; }
-            context.Succeed(Observe(context.Arguments.Count == 1 ? context.Arguments[0] : null));
+            var data = Observe(context.Arguments.Count == 1 ? context.Arguments[0] : null);
+            if (ResultBudget.Exceeds(data, ExtensionJson.Write, "The custom-data reading; pass a key prefix to narrow it") is { } tooLarge)
+            { context.Fail("result_too_large", tooLarge); yield break; }
+            context.Succeed(data);
         }
 
         /// <summary>

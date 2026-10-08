@@ -24,6 +24,8 @@ namespace valheimCLI.Observe
         public const string Source = "dungeon-rooms";
         /// <summary>The largest search radius, in metres.</summary>
         public const float MaxRadius = 256f;
+        /// <summary>Keep the query and its radius clear of the game's +/-255 zone-index limit.</summary>
+        public const float MaxCoordinate = 16000f;
         /// <summary>The most objects one search reads before refusing, rather than returning a partial answer.</summary>
         public const int MaxObjects = 50000;
 
@@ -42,10 +44,14 @@ namespace valheimCLI.Observe
             var arguments = context.Arguments;
             float x = 0f, z = 0f, radius = 64f;
             if (arguments.Count < 2 || arguments.Count > 3 || !Number(arguments[0], out x) || !Number(arguments[1], out z) ||
-                (arguments.Count == 3 && (!Number(arguments[2], out radius) || !(radius > 0f && radius <= MaxRadius))))
-            { context.Fail("usage", "dungeon-rooms <x> <z> [radius], 0 < radius <= " + MaxRadius.ToString(CultureInfo.InvariantCulture)); yield break; }
+                (arguments.Count == 3 && (!Number(arguments[2], out radius) || !(radius > 0f && radius <= MaxRadius))) ||
+                Math.Abs(x) + radius > MaxCoordinate || Math.Abs(z) + radius > MaxCoordinate)
+            { context.Fail("usage", "dungeon-rooms <x> <z> [radius], 0 < radius <= " + MaxRadius.ToString(CultureInfo.InvariantCulture) + "; the circle must stay within +/-" + MaxCoordinate.ToString(CultureInfo.InvariantCulture) + " m"); yield break; }
             if (ZNetScene.instance == null || ZDOMan.instance == null || ZoneSystem.instance == null) { context.Fail("no_world", "No loaded world."); yield break; }
-            context.Succeed(Observe(x, z, radius));
+            var data = Observe(x, z, radius);
+            if (ResultBudget.Exceeds(data, ExtensionJson.Write, "The dungeon-room reading; reduce the radius to narrow it") is { } tooLarge)
+            { context.Fail("result_too_large", tooLarge); yield break; }
+            context.Succeed(data);
         }
 
         private static bool Number(string text, out float value) =>

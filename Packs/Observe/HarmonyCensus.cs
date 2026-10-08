@@ -34,7 +34,10 @@ namespace valheimCLI.Observe
         internal static IEnumerator Run(ExtensionContext context)
         {
             if (context.Arguments.Count > 1) { context.Fail("usage", "harmony [owner]"); yield break; }
-            context.Succeed(Observe(context.Arguments.Count == 1 ? context.Arguments[0] : null));
+            var data = Observe(context.Arguments.Count == 1 ? context.Arguments[0] : null);
+            if (ResultBudget.Exceeds(data, ExtensionJson.Write, "The Harmony census; pass one owner to narrow it") is { } tooLarge)
+            { context.Fail("result_too_large", tooLarge); yield break; }
+            context.Succeed(data);
         }
 
         /// <summary>
