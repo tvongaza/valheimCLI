@@ -62,8 +62,17 @@ public sealed class MainThreadHeartbeatTests
         Assert.Contains("busy=generating%20roads%2012%2F26%20islands", status);
         Assert.Contains("busyMs=4000", status);
         Assert.Contains("mainThreadIdleMs=4000", status);
-        Assert.Throws<ArgumentException>(() => heartbeat.SetBusy("bad\nline"));
-        Assert.Throws<ArgumentException>(() => heartbeat.SetBusy(new string('x', 121)));
+        heartbeat.SetBusy("bad\nline");
+        Assert.Contains("busy=bad%20line", heartbeat.StatusFields(broker));
+        heartbeat.SetBusy(new string('x', 121));
+        Assert.Contains("busy=" + new string('x', 120) + " busyMs=0", heartbeat.StatusFields(broker));
+        heartbeat.SetBusy(new string('x', 119) + "🌲");
+        Assert.Contains("busy=" + new string('x', 119) + " busyMs=0", heartbeat.StatusFields(broker));
+        heartbeat.SetBusy("bad\uD800surrogate");
+        Assert.Contains("busy=bad%3Fsurrogate", heartbeat.StatusFields(broker));
+        heartbeat.SetBusy(" ");
+        Assert.Contains("busy=none busyMs=0", heartbeat.StatusFields(broker));
+        heartbeat.SetBusy("working");
         heartbeat.ClearBusy();
         Assert.Contains("busy=none busyMs=0", heartbeat.StatusFields(broker));
     }

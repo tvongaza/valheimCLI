@@ -244,7 +244,18 @@ The JSON launch response includes `phases`, `failurePhase`, `errorCode`, and the
 valheim-cli -p 5556 --remote wait --for server-ready --timeout 30m   # a dedicated server through a tunnel
 ```
 
-The plugin answers raw `STATUS` on its network thread, even while the game thread is busy. Alongside its existing fields it reports `mainThreadIdleMs` (milliseconds since the last plugin frame, or `-1` before the first frame), `queued` (requests whose callers still wait), `running` (the game-thread command ID or `none`) and `runningMs`. An optional `busy` note and `busyMs` say why a mod knowingly holds the game thread. The note is percent-encoded as one status token; decode it after parsing key/value fields. A mod can call `valheimCLIPlugin.SetBusy("generating roads 12/26 islands")` before long work and `ClearBusy()` in a `finally` block. `STATUS` cannot infer the cause of a stall without a note, and queued game commands still cannot run until the frame resumes. A caller should use these fields to distinguish a busy process from a dead one, with its own bounded deadline; `PING` alone proves only that the socket thread answers.
+The plugin answers raw `STATUS` on its network thread, even while the game thread is busy. Alongside its existing fields it reports `mainThreadIdleMs` (milliseconds since the last plugin frame, or `-1` before the first frame), `queued` (requests whose callers still wait), `running` (the game-thread command ID or `none`) and `runningMs`. An optional `busy` note and `busyMs` say why a mod knowingly holds the game thread. The note is percent-encoded as one status token; decode it after parsing key/value fields. A mod with a required ValheimCLI dependency can call `valheimCLIPlugin.SetBusy("generating roads 12/26 islands")` before long work and `ClearBusy()` in a `finally` block. The note is best effort: an absent plugin does nothing, blank text clears it, and long or control-bearing text is shortened to a printable 120-character note. One process has one busy slot, so the last mod to set it wins. `STATUS` cannot infer the cause of a stall without a note, and queued game commands still cannot run until the frame resumes. A caller should use these fields to distinguish a busy process from a dead one, with its own bounded deadline; `PING` alone proves only that the socket thread answers.
+
+A mod that does **not** require ValheimCLI can look up the type at runtime, so loading that mod does not require the optional DLL:
+
+```csharp
+var cli = Type.GetType("valheimCLI.valheimCLIPlugin, valheimCLI", throwOnError: false);
+var setBusy = cli?.GetMethod("SetBusy", new[] { typeof(string) });
+var clearBusy = cli?.GetMethod("ClearBusy", Type.EmptyTypes);
+setBusy?.Invoke(null, new object[] { "generating roads" });
+try { GenerateRoads(); }
+finally { clearBusy?.Invoke(null, null); }
+```
 
 A wait watches the whole status (process, plugin, state, load phase, location progress, connection) and ends in one of six ways:
 

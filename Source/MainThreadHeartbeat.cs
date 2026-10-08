@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Text;
 using System.Threading;
 
 namespace valheimCLI
@@ -32,12 +33,26 @@ namespace valheimCLI
         /// <summary>
         /// State a mod can publish before deliberately holding the game thread. STATUS percent-encodes the
         /// bounded note so it remains one key/value token; a client decodes it after parsing the status line.
+        /// This diagnostic must never interrupt the mod's work: blank notes clear it, and long or control-bearing
+        /// notes are made printable and shortened.
         /// </summary>
         public void SetBusy(string reason)
         {
-            if (string.IsNullOrWhiteSpace(reason) || reason.Length > 120 || Array.Exists(reason.ToCharArray(), char.IsControl))
-                throw new ArgumentException("A busy note must contain 1 to 120 printable characters.", nameof(reason));
-            lock (_busyLock) { _busy = reason; _busySince = _ticks(); }
+            if (string.IsNullOrWhiteSpace(reason)) { ClearBusy(); return; }
+            var note = new StringBuilder(120);
+            for (int i = 0; i < reason.Length && note.Length < 120; i++)
+            {
+                char c = reason[i];
+                if (char.IsHighSurrogate(c) && i + 1 < reason.Length && char.IsLowSurrogate(reason[i + 1]))
+                {
+                    if (note.Length == 119) break; // Never split a surrogate pair before percent-encoding.
+                    note.Append(c).Append(reason[++i]);
+                }
+                else note.Append(char.IsSurrogate(c) ? '?' : char.IsControl(c) ? ' ' : c);
+            }
+            string printable = note.ToString().Trim();
+            if (printable.Length == 0) { ClearBusy(); return; }
+            lock (_busyLock) { _busy = printable; _busySince = _ticks(); }
         }
 
         public void ClearBusy() { lock (_busyLock) { _busy = null; _busySince = 0; } }

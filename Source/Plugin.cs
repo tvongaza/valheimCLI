@@ -124,7 +124,7 @@ namespace valheimCLI
         }
 
         /// <summary>Publish a bounded reason before intentionally blocking the game thread; STATUS reports it off-thread.</summary>
-        public static void SetBusy(string reason) => (Instance ?? throw new InvalidOperationException("ValheimCLI is not loaded."))._heartbeat.SetBusy(reason);
+        public static void SetBusy(string reason) => Instance?._heartbeat.SetBusy(reason);
 
         /// <summary>Remove the reason once the long game-thread operation finishes.</summary>
         public static void ClearBusy() => Instance?._heartbeat.ClearBusy();
