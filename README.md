@@ -249,7 +249,10 @@ The plugin answers raw `STATUS` on its network thread, even while the game threa
 A mod that does **not** require ValheimCLI can look up the type at runtime, so loading that mod does not require the optional DLL:
 
 ```csharp
-var cli = Type.GetType("valheimCLI.valheimCLIPlugin, valheimCLI", throwOnError: false);
+// Ask BepInEx for the plugin instance it actually loaded; do not resolve a second assembly copy.
+var cli = BepInEx.Bootstrap.Chainloader.PluginInfos.TryGetValue("valheimCLI.valheimCLI", out var loaded)
+    ? loaded.Instance?.GetType()
+    : null;
 var setBusy = cli?.GetMethod("SetBusy", new[] { typeof(string) });
 var clearBusy = cli?.GetMethod("ClearBusy", Type.EmptyTypes);
 setBusy?.Invoke(null, new object[] { "generating roads" });
