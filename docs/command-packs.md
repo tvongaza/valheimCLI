@@ -34,7 +34,16 @@ data, global keys, or a bounded visual review. `zones <x,z> ...` accepts zone
 coordinates on a server or client and reports `areaReady` alongside loaded
 terrain and saved-object counts. A test runner must pin the pack DLL and verify
 the capability before issuing commands. Review commands alter only the owned
-client's temporary visual state and restore it on pack unload.
+client’s temporary visual state and restore it on pack unload.
+
+The older console commands remain for existing scripts. `cli_zone_ready` checks
+a radius, and `cli_area_ready` checks one point; neither is the typed zone
+census that `valheim.observe/zones` returns. `cli_check_global_key` checks one
+key, while `valheim.observe/globalkeys` reports the whole set for comparison
+between actors. `cli_mist` changes loaded mist volumes without a review-state
+lease; new visual tests should use `review-begin`, `review-mist-off` and
+`review-restore` so the original flags are restored. These aliases are not
+required by the Observe pack and are not a substitute for its capabilities.
 
 For a bounded teleport timing trace, run `cli_teleport_trace_arm` on the
 client, request one teleport, then run `cli_teleport_trace_wait <id> [timeout]`
