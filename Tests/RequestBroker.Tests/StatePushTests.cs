@@ -117,6 +117,22 @@ public class StatePushTests
             Assert.True(client.IsConnected);
         });
 
+    [Fact]
+    public Task SilentStatusLivenessProbeDoesNotFallBackToAnUnboundedStateRead() =>
+        Exchange((reader, _) =>
+        {
+            Assert.Equal("STATUS", reader.ReadLine());
+            // Keep the connection open: STATE would be an unsafe second read if STATUS went silent.
+            Assert.Null(reader.ReadLine());
+        }, client =>
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            Assert.Empty(client.GetStatusDetails(fallbackToState: false));
+            Assert.False(client.StatusLineRead);
+            Assert.InRange(clock.Elapsed, TimeSpan.FromMilliseconds(500), TimeSpan.FromSeconds(3));
+            return Task.CompletedTask;
+        });
+
     // No game or station: a loopback peer speaks the line protocol to the real client. Socket waits are bounded on both ends.
     private static async Task Exchange(Action<StreamReader, StreamWriter> serve, Func<ValheimClient, Task> check)
     {

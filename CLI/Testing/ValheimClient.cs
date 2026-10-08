@@ -162,7 +162,7 @@ public class ValheimClient : IDisposable
     /// </summary>
     public bool StatusLineRead { get; private set; }
 
-    public Dictionary<string, string> GetStatusDetails()
+    public Dictionary<string, string> GetStatusDetails(bool fallbackToState = true)
     {
         StatusLineRead = false;
         EnsureConnected();
@@ -193,6 +193,9 @@ public class ValheimClient : IDisposable
 
         if (response == null || !response.StartsWith("STATUS:"))
         {
+            // A liveness probe must never fall back to STATE: the socket may still be open while
+            // the plugin has stopped answering, and GetState has no deadline on this connection.
+            if (!fallbackToState) return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["state"] = GetState(),
