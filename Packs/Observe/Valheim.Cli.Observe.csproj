@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="../../Environment.props" />
+  <PropertyGroup><TargetFramework>net48</TargetFramework><LangVersion>10</LangVersion><Nullable>enable</Nullable><AllowUnsafeBlocks>true</AllowUnsafeBlocks><AssemblyName>Valheim.Cli.Observe</AssemblyName><Version>0.1.0</Version><DebugType>embedded</DebugType></PropertyGroup>
+  <ItemGroup><ProjectReference Include="../../valheimCLI.csproj"><Private>false</Private></ProjectReference></ItemGroup>
+</Project>

@@ -27,7 +27,7 @@ public class CommandPackInventoryTests
     // New commands in optional packs, beyond the preserved pre-split inventory.
     private static readonly string[] NewPackCommands = { "cli_generator_at", "cli_terrain_modifiers_at", "cli_acknowledge_local_cheats", "cli_teleport_trace_arm", "cli_teleport_trace_wait", "cli_teleport_test_mode", "cli_wait_teleportable" };
 
-    private static readonly string[] Packs = { "Standard", "WorldTools", "Capture", "Reflection" };
+    private static readonly string[] Packs = { "Standard", "WorldTools", "Capture", "Reflection", "Observe" };
 
     // Pack implementation types core must not name.
     private static readonly string[] PackTypes =
@@ -47,6 +47,7 @@ public class CommandPackInventoryTests
         ["Valheim.Cli.WorldTools.dll"] = "Packs/WorldTools",
         ["Valheim.Cli.Reflection.dll"] = "Packs/Reflection",
         ["Valheim.Cli.Capture.dll"] = "Packs/Capture",
+        ["Valheim.Cli.Observe.dll"] = "Packs/Observe",
     };
 
     private static readonly Regex Registration = new(@"new Terminal.ConsoleCommand\(""([^""]+)""");

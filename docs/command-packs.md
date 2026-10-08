@@ -11,6 +11,7 @@ There is no second DLL loader or runtime compiler.
 | `Valheim.Cli.WorldTools.dll` | World/ZDO/container census, terrain/rock inspection and actions, structured terrain/collider/player-support observations | 15 |
 | `Valheim.Cli.Reflection.dll` | Optional `cli_call` reflection over game and mod members | 1 |
 | `Valheim.Cli.Capture.dll` | Reversible grass/clutter visibility override | 1 |
+| `Valheim.Cli.Observe.dll` | Optional structured game observations for test runners: zones, content, config, Harmony, review state and frames | 0 |
 
 Before the split, core registered 135 console commands. The seven `cli_mwl_*`
 port commands left core (see below); the other 128 keep their names and are each
@@ -24,6 +25,16 @@ because session, actor and capture actions share existing gameplay helpers;
 these remain one optional assembly to avoid cross-pack static dependencies.
 Further splitting it should follow actual independent consumers, not duplicate
 helpers or introduce dependencies between ScriptEngine-loaded assemblies.
+
+The optional Observe pack registers structured `valheim.observe/*` extension
+capabilities through `cli_extensions`; it adds no console aliases. Install it
+with the same core build when a test needs zone and area readiness, content or
+Harmony censuses, saved rooms, unresolved prefabs, live config, player custom
+data, global keys, or a bounded visual review. `zones <x,z> ...` accepts zone
+coordinates on a server or client and reports `areaReady` alongside loaded
+terrain and saved-object counts. A test runner must pin the pack DLL and verify
+the capability before issuing commands. Review commands alter only the owned
+client's temporary visual state and restore it on pack unload.
 
 For a bounded teleport timing trace, run `cli_teleport_trace_arm` on the
 client, request one teleport, then run `cli_teleport_trace_wait <id> [timeout]`
@@ -155,6 +166,7 @@ dotnet build Packs/Standard/Valheim.Cli.Standard.csproj -c Release
 dotnet build Packs/WorldTools/Valheim.Cli.WorldTools.csproj -c Release
 dotnet build Packs/Capture/Valheim.Cli.Capture.csproj -c Release
 dotnet build Packs/Reflection/Valheim.Cli.Reflection.csproj -c Release
+dotnet build Packs/Observe/Valheim.Cli.Observe.csproj -c Release
 ```
 
 All packs retain `AllowUnsafeBlocks`, matching core: Mono needs the emitted verification attributes when running code compiled against publicized game references. Without it the assemblies load but private-member paths (for example character selection and save completion) fail only when invoked. The inventory check enforces this build setting. This does not change command permissions.
