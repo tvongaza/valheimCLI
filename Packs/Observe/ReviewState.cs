@@ -38,10 +38,18 @@ namespace valheimCLI.Observe
         private static string? _lastRestored;
         private static string? _lastLost;
 
+        /// <summary>Retire a capture as soon as its player, environment or camera leaves the current world.</summary>
+        public static void RetireChangedWorld()
+        {
+            if (_active == null || !WorldChanged(_active)) return;
+            _lastLost = _active.Id;
+            _active = null;
+        }
+
         /// <summary>Whether a visual capture still owns this client's review-state lease.</summary>
         public static bool Owns(string id)
         {
-            if (_active != null && WorldChanged(_active)) { _lastLost = _active.Id; _active = null; }
+            RetireChangedWorld();
             return _active != null && _active.Id == id;
         }
 
@@ -70,7 +78,7 @@ namespace valheimCLI.Observe
             if (!Id(context, out var id)) yield break;
             // A world transition destroys the objects the old lease could restore. Retire it so a rejoined client
             // can begin a new capture; report the loss when the old id is explicitly restored below.
-            if (_active != null && WorldChanged(_active)) { _lastLost = _active.Id; _active = null; }
+            RetireChangedWorld();
             if (_active != null)
             {
                 if (_active.Id != id) context.Fail("busy", "another review capture owns this client's state");
@@ -105,6 +113,7 @@ namespace valheimCLI.Observe
         internal static IEnumerator Restore(ExtensionContext context)
         {
             if (!Id(context, out var id)) yield break;
+            RetireChangedWorld();
             if (_active == null)
             {
                 if (_lastRestored == id) context.Succeed(new Dictionary<string, object?> { ["source"] = "review-state", ["complete"] = true, ["id"] = id, ["state"] = "restored" });
@@ -138,6 +147,7 @@ namespace valheimCLI.Observe
         internal static IEnumerator MistOff(ExtensionContext context)
         {
             if (!Id(context, out var id)) yield break;
+            RetireChangedWorld();
             if (_active == null || _active.Id != id) { context.Fail("not_owned", "begin this review before changing mist"); yield break; }
             var volumes = UnityEngine.Object.FindObjectsByType<Mister>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             foreach (var volume in volumes)
@@ -152,6 +162,7 @@ namespace valheimCLI.Observe
         internal static IEnumerator ClutterOff(ExtensionContext context)
         {
             if (!Id(context, out var id)) yield break;
+            RetireChangedWorld();
             if (_active == null || _active.Id != id) { context.Fail("not_owned", "begin this review before changing clutter"); yield break; }
             var system = ClutterSystem.instance;
             if (system == null) { context.Fail("not_ready", "the clutter system is not loaded"); yield break; }

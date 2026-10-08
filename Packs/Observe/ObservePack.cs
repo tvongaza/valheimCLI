@@ -50,5 +50,7 @@ namespace valheimCLI.Observe
             ReviewState.RestoreOnUnload();
             _registration?.Dispose();
         }
+
+        private void Update() => ReviewState.RetireChangedWorld();
     }
 }

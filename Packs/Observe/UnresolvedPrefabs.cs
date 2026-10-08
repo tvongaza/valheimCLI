@@ -46,6 +46,8 @@ namespace valheimCLI.Observe
             { context.Fail("usage", "unresolved-prefabs [radius], 0 < radius <= " + MaxRadius.ToString(CultureInfo.InvariantCulture)); yield break; }
             if (ZNet.instance == null || ZNetScene.instance == null || ZDOMan.instance == null || ZoneSystem.instance == null)
             { context.Fail("no_world", "No loaded world."); yield break; }
+            if (ZNet.instance.IsDedicated() || Player.m_localPlayer == null)
+            { context.Fail("client_required", "A joined client with a local player is required for this census."); yield break; }
             context.Succeed(Observe(ZNet.instance.GetReferencePosition(), radius));
         }
 
