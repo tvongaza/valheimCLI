@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 
 namespace valheimCLI
 {
@@ -38,6 +39,7 @@ namespace valheimCLI
         private readonly object _lock = new object();
         private long _nextId;
         private long _current;
+        private long _currentSince;
         private readonly Queue<Request> _pending = new Queue<Request>();
         private readonly Dictionary<long, List<string>> _output = new Dictionary<long, List<string>>();
         private readonly HashSet<long> _completed = new HashSet<long>();
@@ -56,7 +58,23 @@ namespace valheimCLI
         public long CurrentRequestId
         {
             get { lock (_lock) return _current; }
-            set { lock (_lock) _current = value; }
+            set { lock (_lock) { _current = value; _currentSince = value == 0 ? 0 : Stopwatch.GetTimestamp(); } }
+        }
+
+        /// <summary>Only requests whose callers are still waiting count as queued.</summary>
+        public readonly record struct WorkSnapshot(int Queued, long RunningId, long RunningMs);
+
+        public WorkSnapshot SnapshotWork()
+        {
+            lock (_lock)
+            {
+                int waiting = 0;
+                foreach (Request request in _pending)
+                    if (!_abandoned.Contains(request.Id)) waiting++;
+                long runningMs = _current == 0 ? 0 : (long)Math.Max(0d,
+                    (double)(Stopwatch.GetTimestamp() - _currentSince) * 1000d / Stopwatch.Frequency);
+                return new WorkSnapshot(waiting, _current, runningMs);
+            }
         }
 
         public int PendingCount { get { lock (_lock) return _pending.Count; } }
