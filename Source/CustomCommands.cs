@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
-using System.Globalization;
 using System.Linq;
 using System.Reflection;
 using UnityEngine;
@@ -2693,6 +2692,18 @@ namespace valheimCLI
         }
 
         /// <summary>
+        /// The nearest point of a collider to a position. Physics.ClosestPoint
+        /// supports only box, sphere, capsule and convex mesh colliders: on a
+        /// non-convex mesh (rocks, cliffs) Unity logs a warning and returns the
+        /// position itself, so every rock read as 0.00 m away and sorted first.
+        /// Those are measured to their bounding box instead.
+        /// </summary>
+        internal static Vector3 ClosestPointOn(Collider collider, Vector3 position) =>
+            collider is MeshCollider mesh && !mesh.convex
+                ? collider.bounds.ClosestPoint(position)
+                : collider.ClosestPoint(position);
+
+        /// <summary>
         /// Position-anchored census. Unlike ListNearbyPrefabs it is immune to
         /// the player moving mid-measurement; the anchor must still be within
         /// the player's loaded range.
@@ -2711,7 +2722,7 @@ namespace valheimCLI
 
                 ZNetView nview = collider.GetComponentInParent<ZNetView>();
                 GameObject root = nview != null ? nview.gameObject : collider.gameObject;
-                float distance = Vector3.Distance(playerPos, collider.ClosestPoint(playerPos));
+                float distance = Vector3.Distance(playerPos, ClosestPointOn(collider, playerPos));
                 if (!found.TryGetValue(root, out float existing) || distance < existing)
                 {
                     found[root] = distance;
