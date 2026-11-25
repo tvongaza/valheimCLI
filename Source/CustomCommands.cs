@@ -2962,7 +2962,7 @@ namespace valheimCLI
                 {
                     foreach (ZoneSystem.LocationInstance location in list)
                     {
-                        string name = location.m_location.m_prefab.Name;
+                        string name = location.m_location.m_prefab.name;
                         writer.WriteLine($"{name},{location.m_position.x.ToString("F1", invariant)},{location.m_position.z.ToString("F1", invariant)},{location.m_location.m_exteriorRadius.ToString("F1", invariant)}");
                         locations++;
                     }
