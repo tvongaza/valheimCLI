@@ -51,6 +51,7 @@ for zones nobody has loaded. None of them changes the world.
 | `cli_piece_support 100 200 30 wood` | Each build piece's support as the game holds it, the material's limits, and whether that number has been computed yet |
 | `cli_rocks_at 100 200 30` | Loaded rocks: each breakable boulder's remaining pieces with health and world bounds, other rocks' bounds, items on the ground |
 | `cli_rock_health 100 200 30` | Each breakable boulder's destroyed pieces from its saved object, compared with the live rock where one is loaded |
+| `cli_rock_hit 100 40 200 2.5` | Not an inspection: breaks the rocks inside the sphere with the game's own area damage (MineRock5.Damage, then its support check); a whole fracturing rock is first swapped for its fractured copy. Host only, cheat |
 
 `cli_solids_over <half> <from> <to> <x> <y> <z> ...` tests an upright box
 `2*half` metres square from `y+from` to `y+to` over each point, so `y` is
