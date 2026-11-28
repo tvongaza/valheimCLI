@@ -18,8 +18,6 @@ namespace valheimCLI
     /// </summary>
     public static class RockActionCommands
     {
-        public const string Usage = "Usage: cli_rock_hit <x> <y> <z> <radius> [damage=1000]";
-
         public static void Register()
         {
             new Terminal.ConsoleCommand("cli_rock_hit", "Hit the rocks inside a sphere with the game's own area damage, as a tool or blast does: a breakable boulder loses every piece inside the sphere, then the pieces its support check finds holding on nothing; a whole rock that fractures (cliff_mistlands2) is swapped for its fractured copy (hit again to break pieces). Rocks only: cli_rock_hit <x> <y> <z> <radius> [damage=1000]. Run it where the rock is owned (the host).", (Terminal.ConsoleEvent)delegate(Terminal.ConsoleEventArgs args)
@@ -30,29 +28,24 @@ namespace valheimCLI
 
         public static void RockHit(Terminal.ConsoleEventArgs args, Action<string> output)
         {
-            if (args.Length < 5 || args.Length > 6
-                || !CommandArguments.TryFiniteFloat(args[1], out float x)
-                || !CommandArguments.TryFiniteFloat(args[2], out float y)
-                || !CommandArguments.TryFiniteFloat(args[3], out float z)
-                || !CommandArguments.TryRadius(args[4], out float radius) || radius > 64f)
+            if (!RockHitRequest.TryParse(args.Args, out RockHitRequest request, out string error))
             {
-                output(Usage + " (radius 0..64)");
+                output(error);
                 return;
             }
-            float damage = 1000f;
-            if (args.Length == 6 && (!CommandArguments.TryFiniteFloat(args[5], out damage) || damage <= 0f))
-            {
-                output(Usage);
-                return;
-            }
+            float x = request.X;
+            float y = request.Y;
+            float z = request.Z;
+            float radius = request.Radius;
+            float damage = request.Damage;
             if (ZNetScene.instance == null)
             {
                 output("ERROR: no world loaded");
                 return;
             }
             Vector3 point = new Vector3(x, y, z);
-            var rocks = new HashSet<MineRock5>();
-            var whole = new HashSet<Destructible>();
+            HashSet<MineRock5> rocks = new HashSet<MineRock5>();
+            HashSet<Destructible> whole = new HashSet<Destructible>();
             foreach (Collider collider in Physics.OverlapSphere(point, radius, ~0, QueryTriggerInteraction.Ignore))
             {
                 MineRock5 rock = collider.GetComponentInParent<MineRock5>();
@@ -76,7 +69,7 @@ namespace valheimCLI
                     continue;
                 }
                 Vector3 p = destructible.transform.position;
-                output($"  ROCKHIT swap {CommandArguments.CleanPrefabName(destructible.gameObject.name)} pos={F(p.x)},{F(p.y)},{F(p.z)} scale={F(destructible.transform.localScale.x)} owner={view.IsOwner()} -> {CommandArguments.CleanPrefabName(destructible.m_spawnWhenDestroyed.name)}");
+                output(RockHitRequest.SwapRow(CommandArguments.CleanPrefabName(destructible.gameObject.name), p.x, p.y, p.z, destructible.transform.localScale.x, view.IsOwner(), CommandArguments.CleanPrefabName(destructible.m_spawnWhenDestroyed.name)));
                 destructible.Damage(Hit(point, 0f, damage));
                 hit++;
             }
@@ -90,15 +83,15 @@ namespace valheimCLI
                 rock.Damage(Hit(point, radius, damage));
                 int after = Left(rock);
                 Vector3 p = rock.transform.position;
-                output($"  ROCKHIT pieces {CommandArguments.CleanPrefabName(rock.gameObject.name)} pos={F(p.x)},{F(p.y)},{F(p.z)} scale={F(rock.transform.localScale.x)} owner={rock.m_nview.IsOwner()} pieces={rock.m_hitAreas.Count} left_before={before} left_after={after}");
+                output(RockHitRequest.PiecesRow(CommandArguments.CleanPrefabName(rock.gameObject.name), p.x, p.y, p.z, rock.transform.localScale.x, rock.m_nview.IsOwner(), rock.m_hitAreas.Count, before, after));
                 hit++;
             }
-            output(hit == 0 ? "OK: 0 rock(s) inside the sphere" : $"OK: {hit} rock(s) hit at {F(x)},{F(y)},{F(z)} r={F(radius)} damage={F(damage)}");
+            output(request.Summary(hit));
         }
 
         private static HitData Hit(Vector3 point, float radius, float damage)
         {
-            var hit = new HitData();
+            HitData hit = new HitData();
             hit.m_point = point;
             hit.m_radius = radius;
             hit.m_damage.m_damage = damage;
@@ -121,6 +114,5 @@ namespace valheimCLI
             return left;
         }
 
-        private static string F(float v) => v.ToString("F2", System.Globalization.CultureInfo.InvariantCulture);
     }
 }

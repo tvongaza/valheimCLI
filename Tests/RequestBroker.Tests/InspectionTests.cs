@@ -84,6 +84,7 @@ namespace valheimCLI.Tests
         [InlineData("cli_piece_support", "loaded-world")]
         [InlineData("cli_rocks_at", "loaded-world")]
         [InlineData("cli_rock_health", "loaded-world")]
+        [InlineData("cli_rock_hit", "loaded-world")]
         [InlineData("cli_nearby_prefabs", "local-player")]
         public void CommandsDeclareTheirActualContext(string name, string context)
         {
