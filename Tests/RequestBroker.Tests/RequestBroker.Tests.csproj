@@ -71,6 +71,7 @@
     <Compile Include="../../Packs/Standard/GeneratorPointRequest.cs" Link="Source/GeneratorPointRequest.cs" />
     <Compile Include="../../Packs/Standard/CameraMotion.cs" Link="Source/CameraMotion.cs" />
     <Compile Include="../../Packs/Standard/DestroyAtRequest.cs" Link="Source/DestroyAtRequest.cs" />
+    <Compile Include="../../Packs/WorldTools/RockHitRequest.cs" Link="Source/RockHitRequest.cs" />
   </ItemGroup>
 
   <ItemGroup>

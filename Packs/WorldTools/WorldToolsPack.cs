@@ -13,7 +13,7 @@ namespace valheimCLI
             {
                 _observations = WorldObservations.Register(core.Extensions!);
                 _module = core.Modules.Register("cli.worldtools", "0.1.0", () =>
-                { WorldInspectionCommands.Register(); TerrainInspectionCommands.Register(); RockInspectionCommands.Register(); TerrainActionCommands.Register(); });
+                { WorldInspectionCommands.Register(); TerrainInspectionCommands.Register(); RockInspectionCommands.Register(); RockActionCommands.Register(); TerrainActionCommands.Register(); });
             }
             catch { Dispose(); throw; }
         }
