@@ -84,7 +84,15 @@ public class RockHitRequestTests
     {
         Assert.Equal(
             "  ROCKHIT swap cliff_mistlands2 pos=-8880.00,52.90,2700.00 scale=1.00 owner=False -> cliff_mistlands2_frac",
-            RockHitRequest.SwapRow("cliff_mistlands2", -8880f, 52.9f, 2700f, 1f, false, "cliff_mistlands2_frac"));
+            RockHitRequest.SwapRow("cliff_mistlands2", -8880f, 52.9f, 2700f, 1f, false, "cliff_mistlands2_frac", true));
+    }
+
+    [Fact]
+    public void AWholeRockThatDidNotSwapSaysSo()
+    {
+        string row = RockHitRequest.SwapRow("cliff_mistlands2", 1f, 2f, 3f, 1f, true, "cliff_mistlands2_frac", false);
+        Assert.Contains("NOT swapped", row);
+        Assert.DoesNotContain("->", row);
     }
 
     private static string[] Args(string line) => line.Split(' ', StringSplitOptions.RemoveEmptyEntries);

@@ -64,10 +64,10 @@ namespace valheimCLI
                 : $"OK: {rocksHit} rock(s) hit at {F(X)},{F(Y)},{F(Z)} r={F(Radius)} damage={F(Damage)}";
         }
 
-        /// <summary>The row for a whole rock swapped for its fractured copy.</summary>
-        public static string SwapRow(string name, float x, float y, float z, float scale, bool owner, string fracturedName)
+        /// <summary>The row for a whole rock hit: swapped for its fractured copy, or still whole.</summary>
+        public static string SwapRow(string name, float x, float y, float z, float scale, bool owner, string fracturedName, bool swapped)
         {
-            return $"  ROCKHIT swap {name} pos={F(x)},{F(y)},{F(z)} scale={F(scale)} owner={owner} -> {fracturedName}";
+            return $"  ROCKHIT swap {name} pos={F(x)},{F(y)},{F(z)} scale={F(scale)} owner={owner} " + (swapped ? $"-> {fracturedName}" : $"NOT swapped (still whole: damage below its health, or not the owner)");
         }
 
         /// <summary>The row for a breakable boulder hit: pieces with health before and after.</summary>

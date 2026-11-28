@@ -44,14 +44,19 @@ namespace valheimCLI
                 return;
             }
             Vector3 point = new Vector3(x, y, z);
-            HashSet<MineRock5> rocks = new HashSet<MineRock5>();
+            Dictionary<MineRock5, List<Collider>> rocks = new Dictionary<MineRock5, List<Collider>>();
             HashSet<Destructible> whole = new HashSet<Destructible>();
             foreach (Collider collider in Physics.OverlapSphere(point, radius, ~0, QueryTriggerInteraction.Ignore))
             {
                 MineRock5 rock = collider.GetComponentInParent<MineRock5>();
                 if (rock != null)
                 {
-                    rocks.Add(rock);
+                    if (!rocks.TryGetValue(rock, out List<Collider> pieces))
+                    {
+                        pieces = new List<Collider>();
+                        rocks.Add(rock, pieces);
+                    }
+                    pieces.Add(collider);
                     continue;
                 }
                 Destructible destructible = collider.GetComponentInParent<Destructible>();
@@ -69,24 +74,50 @@ namespace valheimCLI
                     continue;
                 }
                 Vector3 p = destructible.transform.position;
-                output(RockHitRequest.SwapRow(CommandArguments.CleanPrefabName(destructible.gameObject.name), p.x, p.y, p.z, destructible.transform.localScale.x, view.IsOwner(), CommandArguments.CleanPrefabName(destructible.m_spawnWhenDestroyed.name)));
+                string name = CommandArguments.CleanPrefabName(destructible.gameObject.name);
+                float scale = destructible.transform.localScale.x;
+                bool owner = view.IsOwner();
+                string fractured = CommandArguments.CleanPrefabName(destructible.m_spawnWhenDestroyed.name);
                 destructible.Damage(Hit(point, 0f, damage));
+                output(RockHitRequest.SwapRow(name, p.x, p.y, p.z, scale, owner, fractured, destructible.m_destroyed));
                 hit++;
             }
-            foreach (MineRock5 rock in rocks)
+            foreach (KeyValuePair<MineRock5, List<Collider>> entry in rocks)
             {
+                MineRock5 rock = entry.Key;
                 if (rock.m_nview == null || !rock.m_nview.IsValid() || rock.m_hitAreas == null)
                 {
                     continue;
                 }
+                // Owner is read first: a rock hit to nothing is destroyed and loses its view.
+                bool owner = rock.m_nview.IsOwner();
                 int before = Left(rock);
-                rock.Damage(Hit(point, radius, damage));
-                int after = Left(rock);
                 Vector3 p = rock.transform.position;
-                output(RockHitRequest.PiecesRow(CommandArguments.CleanPrefabName(rock.gameObject.name), p.x, p.y, p.z, rock.transform.localScale.x, rock.m_nview.IsOwner(), rock.m_hitAreas.Count, before, after));
+                string name = CommandArguments.CleanPrefabName(rock.gameObject.name);
+                float scale = rock.transform.localScale.x;
+                int pieceCount = rock.m_hitAreas.Count;
+                // Each piece found by the unbounded overlap above is hit by its own collider: the game's
+                // sphere search shares a 128-collider buffer with everything else in the sphere and can skip pieces.
+                foreach (Collider piece in entry.Value)
+                {
+                    if (piece == null || rock.m_nview == null || !rock.m_nview.IsValid())
+                    {
+                        continue;
+                    }
+                    rock.Damage(Hit(point, piece, damage));
+                }
+                int after = rock.m_nview != null && rock.m_nview.IsValid() ? Left(rock) : 0;
+                output(RockHitRequest.PiecesRow(name, p.x, p.y, p.z, scale, owner, pieceCount, before, after));
                 hit++;
             }
             output(request.Summary(hit));
+        }
+
+        private static HitData Hit(Vector3 point, Collider piece, float damage)
+        {
+            HitData hitData = Hit(point, 0f, damage);
+            hitData.m_hitCollider = piece;
+            return hitData;
         }
 
         private static HitData Hit(Vector3 point, float radius, float damage)
@@ -95,7 +126,6 @@ namespace valheimCLI
             hit.m_point = point;
             hit.m_radius = radius;
             hit.m_damage.m_damage = damage;
-            hit.m_damage.m_pickaxe = damage;
             hit.m_toolTier = 100;
             hit.m_hitType = HitData.HitType.Structural;
             return hit;
